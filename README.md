@@ -1,39 +1,74 @@
----
-title: NextJS Prisma
-description: A NextJS app using Prisma with a PostgreSQL database
-tags:
-  - next
-  - prisma
-  - postgresql
-  - typescript
----
+# Policy Checker MVP
 
-# NextJS Prisma Example
+Web MVP for the SKILL AND CHILL recruitment case study. The app evaluates purchase/vendor requests against published, versioned business policies and stores an auditable decision snapshot.
 
-This example is a [NextJS](https://nextjs.org/) todo app that uses
-[Prisma](https://www.prisma.io/) to store todos in Postgres.
+## What is included
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/nextjs?referralCode=asepsp&utm_medium=integration&utm_source=template&utm_campaign=generic)
+- Purchase request form with dynamic personal-data fields.
+- Role-specific screens for requester intake, reviewer queue, policy studio and audit reconstruction.
+- Request queue, filters, detail view, comments and attachment metadata.
+- Deterministic rule engine with explainable decisions.
+- Decisions: `APPROVED`, `REQUIRES_REVIEW`, `REJECTED`, `MISSING_INFORMATION`.
+- Policy, policy version and rule models in Prisma.
+- Rule builder and basic rule testing console.
+- Evaluation history with input snapshot, result snapshot and applied policy versions.
+- Manual override stored separately from the original system decision.
+- Operational dashboard with request counts, rule hits and missing fields.
+- Demo scenario: SaaS request for Acme Analytics, 8 000 EUR, personal data, no DPA.
 
-## ✨ Features
+## Stack
 
-- Prisma
-- NextJS
-- Postgres
+- Next.js pages router
 - TypeScript
+- Prisma
+- PostgreSQL
+- Zod
+- SWR
+- Medusa UI, Medusa icons and the Medusa Tailwind preset
+- Tailwind CSS
+- Vitest
 
-## 💁‍♀️ How to use
+## Local commands
 
-- [Provision a Postgres container on Railway](https://dev.new)
-- Connect to your Railway project with `railway link`
-- Migrate the database `railway run yarn migrate:dev`
-- Run the NextJS app `railway run yarn dev`
+```bash
+npm install
+npm run test
+npm run build
+```
 
-## 📝 Notes
+Because this project path contains `&`, local Windows shells may fail on package binaries such as `next` or `prisma`. Direct node invocations work:
 
-This app is a simple todo list where the data is persisted to Postgres. [Prisma
-migrations](https://www.prisma.io/docs/concepts/components/prisma-migrate#prisma-migrate)
-can be created with `railway run yarn migrate:dev` and deployed with `railway run yarn migrate:deploy`. The Prisma client can be regenerated with
-`yarn generate`.
+```powershell
+node .\node_modules\prisma\build\index.js generate
+node .\node_modules\next\dist\bin\next build
+```
 
-[swr](https://swr.vercel.app/) is used to fetch data on the client and perform optimistic updates.
+## Database
+
+The Prisma schema expects:
+
+```bash
+DATABASE_URL="postgresql://..."
+```
+
+Run migrations and seed after pointing `DATABASE_URL` to a reachable Postgres database:
+
+```bash
+prisma migrate deploy
+npm run seed
+```
+
+For local UI verification without a reachable Postgres database, run the app in memory demo mode:
+
+```powershell
+$env:POLICY_CHECKER_MEMORY_DEMO="1"
+node .\node_modules\next\dist\bin\next dev -p 3000
+```
+
+Memory mode is for local demo/testing only. The normal API path uses Prisma and PostgreSQL.
+
+## Notes
+
+- AI is not used to make final decisions. The rule engine evaluates JSON conditions and effects deterministically.
+- Published policy versions should not be edited directly; create a new draft version, add rules, then publish.
+- Attachment handling is metadata-only in this MVP. A production version should connect this model to object storage.

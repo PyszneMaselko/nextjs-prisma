@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -10,9 +7,362 @@ generator client {
   provider = "prisma-client-js"
 }
 
-model Todo {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
-  text      String
-  completed Boolean
+enum RoleCode {
+  REQUESTER
+  REVIEWER
+  POLICY_OWNER
+  POLICY_APPROVER
+  ADMIN
+  AUDITOR
+}
+
+enum RequestType {
+  NEW_VENDOR
+  NEW_SOFTWARE
+  SOFTWARE_RENEWAL
+  CONSULTING_SERVICE
+  HARDWARE_PURCHASE
+  EXCEPTION_REQUEST
+}
+
+enum PurchaseCategory {
+  SAAS
+  HARDWARE
+  CONSULTING
+  MARKETING_SERVICE
+  CLOUD_SERVICE
+  DATA_PROVIDER
+  OTHER
+}
+
+enum Currency {
+  EUR
+  PLN
+  USD
+  GBP
+}
+
+enum Department {
+  MARKETING
+  ENGINEERING
+  FINANCE
+  PROCUREMENT
+  SECURITY
+  LEGAL
+  HR
+  OPERATIONS
+}
+
+enum Urgency {
+  LOW
+  NORMAL
+  HIGH
+  EMERGENCY
+}
+
+enum VendorRisk {
+  LOW
+  MEDIUM
+  HIGH
+  UNKNOWN
+}
+
+enum DataClassification {
+  NONE
+  PUBLIC
+  INTERNAL
+  CONFIDENTIAL
+  PERSONAL_DATA
+  SENSITIVE_PERSONAL_DATA
+}
+
+enum RequestStatus {
+  DRAFT
+  SUBMITTED
+  AUTO_APPROVED
+  NEEDS_INFORMATION
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  APPROVED_WITH_EXCEPTION
+  CANCELLED
+}
+
+enum Decision {
+  APPROVED
+  REQUIRES_REVIEW
+  REJECTED
+  MISSING_INFORMATION
+}
+
+enum PolicyDomain {
+  PROCUREMENT
+  VENDOR_RISK
+  DATA_SECURITY
+  FINANCE
+}
+
+enum PolicyStatus {
+  DRAFT
+  IN_REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+enum PolicyVersionStatus {
+  DRAFT
+  IN_REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+enum RuleSeverity {
+  INFO
+  WARNING
+  BLOCKER
+}
+
+enum CommentVisibility {
+  PUBLIC
+  INTERNAL
+}
+
+enum AttachmentType {
+  DPA
+  CONTRACT
+  OFFER
+  APPROVAL_MAIL
+  SECURITY_QUESTIONNAIRE
+  VENDOR_ASSESSMENT
+  OTHER
+}
+
+model User {
+  id                 String              @id @default(uuid())
+  name               String
+  email              String              @unique
+  createdAt          DateTime            @default(now())
+  roleAssignments    RoleAssignment[]
+  requesterRequests  Request[]           @relation("RequesterRequests")
+  businessRequests   Request[]           @relation("BusinessOwnerRequests")
+  budgetRequests     Request[]           @relation("BudgetOwnerRequests")
+  ownedPolicies      Policy[]            @relation("PolicyOwner")
+  authoredVersions   PolicyVersion[]     @relation("PolicyVersionAuthor")
+  comments           RequestComment[]
+  attachments        RequestAttachment[]
+  evaluations        PolicyEvaluation[]  @relation("EvaluationActor")
+  overridesCreated   ManualOverride[]    @relation("OverrideCreator")
+  overridesApproved  ManualOverride[]    @relation("OverrideApprover")
+  auditEvents        AuditEvent[]
+}
+
+model Role {
+  id              String           @id @default(uuid())
+  code            RoleCode         @unique
+  name            String
+  description     String
+  createdAt       DateTime         @default(now())
+  assignments     RoleAssignment[]
+}
+
+model RoleAssignment {
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model Request {
+  id                             String                 @id @default(uuid())
+  title                          String
+  description                    String
+  type                           RequestType
+  category                       PurchaseCategory
+  status                         RequestStatus          @default(DRAFT)
+  decision                       Decision?
+  annualCost                     Decimal                @db.Decimal(12, 2)
+  currency                       Currency
+  vendorName                     String
+  vendorCountry                  String
+  department                     Department
+  urgency                        Urgency
+  justification                  String
+  processesPersonalData          Boolean
+  dataCategories                 String[]
+  dataClassification             DataClassification     @default(NONE)
+  hasDpa                         Boolean?
+  transfersOutsideEea            Boolean                @default(false)
+  requiresSecurityQuestionnaire  Boolean                @default(false)
+  vendorRisk                     VendorRisk             @default(UNKNOWN)
+  inputData                      Json
+  requesterId                    String
+  businessOwnerId                String
+  budgetOwnerId                  String?
+  createdAt                      DateTime               @default(now())
+  updatedAt                      DateTime               @updatedAt
+  requester                      User                   @relation("RequesterRequests", fields: [requesterId], references: [id])
+  businessOwner                  User                   @relation("BusinessOwnerRequests", fields: [businessOwnerId], references: [id])
+  budgetOwner                    User?                  @relation("BudgetOwnerRequests", fields: [budgetOwnerId], references: [id])
+  comments                       RequestComment[]
+  attachments                    RequestAttachment[]
+  evaluations                    PolicyEvaluation[]
+  manualOverrides                ManualOverride[]
+
+  @@index([status])
+  @@index([decision])
+  @@index([category])
+  @@index([vendorName])
+  @@index([department])
+  @@index([createdAt])
+}
+
+model RequestComment {
+  id          String            @id @default(uuid())
+  requestId   String
+  authorId    String
+  visibility  CommentVisibility @default(PUBLIC)
+  body        String
+  createdAt   DateTime          @default(now())
+  request     Request           @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  author      User              @relation(fields: [authorId], references: [id])
+
+  @@index([requestId, createdAt])
+}
+
+model RequestAttachment {
+  id              String         @id @default(uuid())
+  requestId       String
+  uploadedById    String
+  attachmentType  AttachmentType @default(OTHER)
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  storageKey      String?
+  createdAt       DateTime       @default(now())
+  request         Request        @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  uploadedBy      User           @relation(fields: [uploadedById], references: [id])
+
+  @@index([requestId])
+}
+
+model Policy {
+  id                String          @id @default(uuid())
+  name              String
+  description       String
+  domain            PolicyDomain
+  status            PolicyStatus    @default(DRAFT)
+  ownerId           String
+  currentVersionId  String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  owner             User            @relation("PolicyOwner", fields: [ownerId], references: [id])
+  versions          PolicyVersion[]
+
+  @@index([domain])
+  @@index([status])
+}
+
+model PolicyVersion {
+  id             String              @id @default(uuid())
+  policyId       String
+  versionNumber  Int
+  status         PolicyVersionStatus @default(DRAFT)
+  effectiveFrom  DateTime?
+  effectiveTo    DateTime?
+  authorId       String
+  changeSummary  String
+  createdAt      DateTime            @default(now())
+  policy         Policy              @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  author         User                @relation("PolicyVersionAuthor", fields: [authorId], references: [id])
+  rules          Rule[]
+
+  @@unique([policyId, versionNumber])
+  @@index([status])
+}
+
+model Rule {
+  id               String        @id @default(uuid())
+  policyVersionId  String
+  name             String
+  description      String
+  severity         RuleSeverity
+  condition        Json
+  effects          Json
+  reason           String
+  enabled          Boolean       @default(true)
+  priority         Int           @default(100)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  policyVersion    PolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Cascade)
+  ruleMatches      PolicyEvaluationRuleMatch[]
+
+  @@index([policyVersionId, enabled, priority])
+}
+
+model PolicyEvaluation {
+  id                     String                      @id @default(uuid())
+  requestId              String
+  decision               Decision
+  inputSnapshot          Json
+  resultSnapshot         Json
+  appliedPolicyVersions  Json
+  evaluatedById          String?
+  evaluatedAt            DateTime                    @default(now())
+  request                Request                     @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  evaluatedBy            User?                       @relation("EvaluationActor", fields: [evaluatedById], references: [id])
+  ruleMatches            PolicyEvaluationRuleMatch[]
+
+  @@index([requestId, evaluatedAt])
+  @@index([decision])
+}
+
+model PolicyEvaluationRuleMatch {
+  id             String           @id @default(uuid())
+  evaluationId   String
+  ruleId         String?
+  matched        Boolean
+  ruleSnapshot   Json
+  effects        Json
+  facts          Json
+  reason         String
+  evaluation     PolicyEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  rule           Rule?            @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  @@index([evaluationId])
+  @@index([ruleId])
+}
+
+model ManualOverride {
+  id                 String    @id @default(uuid())
+  requestId          String
+  originalDecision   Decision?
+  newDecision        Decision
+  reason             String
+  comment            String
+  approverId         String
+  createdById        String
+  attachmentName     String?
+  createdAt          DateTime  @default(now())
+  request            Request   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  approver           User      @relation("OverrideApprover", fields: [approverId], references: [id])
+  createdBy          User      @relation("OverrideCreator", fields: [createdById], references: [id])
+
+  @@index([requestId, createdAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid())
+  actorId     String?
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json
+  createdAt   DateTime @default(now())
+  actor       User?    @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@index([action])
 }
