@@ -4,7 +4,13 @@ import {
   PolicyVersionDefinition,
   RequestInput,
 } from "../domain/policy/types";
-import { demoPolicyVersions, demoRequestInput, demoRoles, demoUsers } from "../domain/policy/demoData";
+import {
+  demoPendingApprovalVersion,
+  demoPolicyVersions,
+  demoRequestInput,
+  demoRoles,
+  demoUsers,
+} from "../domain/policy/demoData";
 import { evaluatePolicyVersions } from "../domain/policy/ruleEngine";
 import { prisma } from "../lib/prisma";
 
@@ -200,6 +206,15 @@ export const evaluateRequestAndPersist = async (requestId: string, evaluatedById
   return getRequestDetail(requestId);
 };
 
+export const getActorRoleCodes = async (actorId?: string | null): Promise<string[]> => {
+  if (!actorId) return [];
+  const user = await prisma.user.findUnique({
+    where: { id: actorId },
+    include: { roleAssignments: { include: { role: true } } },
+  });
+  return user?.roleAssignments.map(assignment => assignment.role.code) ?? [];
+};
+
 export const createAuditEvent = async (
   action: string,
   entityType: string,
@@ -296,6 +311,45 @@ export const resetDemoData = async () => {
       },
     });
   }
+
+  const pendingVersion = await prisma.policyVersion.create({
+    data: {
+      id: demoPendingApprovalVersion.id,
+      policyId: demoPendingApprovalVersion.policyId,
+      versionNumber: demoPendingApprovalVersion.versionNumber,
+      status: "IN_REVIEW",
+      authorId: demoPendingApprovalVersion.authorId,
+      changeSummary: demoPendingApprovalVersion.changeSummary,
+      rules: {
+        create: [
+          {
+            id: demoPendingApprovalVersion.rule.id,
+            name: demoPendingApprovalVersion.rule.name,
+            description: demoPendingApprovalVersion.rule.description,
+            severity: demoPendingApprovalVersion.rule.severity as any,
+            condition: demoPendingApprovalVersion.rule.condition as any,
+            effects: demoPendingApprovalVersion.rule.effects as any,
+            reason: demoPendingApprovalVersion.rule.reason,
+            enabled: demoPendingApprovalVersion.rule.enabled,
+            priority: demoPendingApprovalVersion.rule.priority,
+          },
+        ],
+      },
+    },
+  });
+
+  await prisma.policy.update({
+    where: { id: demoPendingApprovalVersion.policyId },
+    data: { status: "IN_REVIEW" },
+  });
+
+  await createAuditEvent(
+    "POLICY_VERSION_SUBMITTED_FOR_APPROVAL",
+    "PolicyVersion",
+    pendingVersion.id,
+    { policyId: demoPendingApprovalVersion.policyId, versionNumber: demoPendingApprovalVersion.versionNumber },
+    demoPendingApprovalVersion.authorId,
+  );
 
   const request = await prisma.request.create({
     data: {

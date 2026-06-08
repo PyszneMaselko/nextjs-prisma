@@ -1,4 +1,4 @@
-﻿-- Drop old Railway template table
+-- Drop old Railway template table
 DROP TABLE IF EXISTS "Todo";
 
 -- CreateEnum

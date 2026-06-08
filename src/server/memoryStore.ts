@@ -23,6 +23,11 @@ const now = () => new Date().toISOString();
 
 const userById = (state: MemoryState, userId: string) => state.users.find(user => user.id === userId);
 
+const actorRoleCodes = (state: MemoryState, actorId: string): string[] =>
+  (userById(state, actorId)?.roleAssignments ?? [])
+    .map((assignment: any) => assignment.role?.code)
+    .filter(Boolean);
+
 const toPolicyDefinitions = (state: MemoryState): PolicyVersionDefinition[] =>
   state.policies
     .filter(policy => policy.status === "PUBLISHED")
@@ -444,10 +449,53 @@ export const memoryCreateVersion = (policyId: string, input: any) => {
   return { policy };
 };
 
-export const memoryPublishVersion = (policyId: string, versionId: string) => {
+export const memorySubmitVersionForApproval = (policyId: string, versionId: string, actorId: string) => {
   const state = getMemoryState();
   const policy = state.policies.find(item => item.id === policyId);
   if (!policy) return null;
+  if (!actorRoleCodes(state, actorId).includes("POLICY_OWNER")) {
+    return { error: "Only a Policy Owner can submit a version for approval." };
+  }
+  const version = policy.versions.find((item: any) => item.id === versionId);
+  if (!version) return null;
+  if (version.status !== "DRAFT") {
+    return { error: "Only DRAFT versions can be submitted for approval." };
+  }
+  version.status = "IN_REVIEW";
+  policy.status = "IN_REVIEW";
+  return { policy };
+};
+
+export const memoryRejectVersion = (policyId: string, versionId: string, actorId: string, reason: string) => {
+  const state = getMemoryState();
+  const policy = state.policies.find(item => item.id === policyId);
+  if (!policy) return null;
+  if (!actorRoleCodes(state, actorId).includes("POLICY_APPROVER")) {
+    return { error: "Only a Policy Approver can reject a version." };
+  }
+  const version = policy.versions.find((item: any) => item.id === versionId);
+  if (!version) return null;
+  if (version.status !== "IN_REVIEW") {
+    return { error: "Only versions awaiting approval can be rejected." };
+  }
+  version.status = "DRAFT";
+  version.rejectionReason = reason;
+  policy.status = "DRAFT";
+  return { policy };
+};
+
+export const memoryPublishVersion = (policyId: string, versionId: string, actorId: string) => {
+  const state = getMemoryState();
+  const policy = state.policies.find(item => item.id === policyId);
+  if (!policy) return null;
+  if (!actorRoleCodes(state, actorId).includes("POLICY_APPROVER")) {
+    return { error: "Only a Policy Approver can publish a policy version." };
+  }
+  const target = policy.versions.find((item: any) => item.id === versionId);
+  if (!target) return null;
+  if (target.status !== "IN_REVIEW") {
+    return { error: "Only versions awaiting approval can be published. Submit the version for approval first." };
+  }
   policy.versions.forEach((version: any) => {
     if (version.id === versionId) {
       version.status = "PUBLISHED";

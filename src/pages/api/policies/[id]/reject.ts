@@ -2,13 +2,14 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
 import { prisma } from "../../../../lib/prisma";
 import { handleApiError, methodNotAllowed, parseRequestBody } from "../../../../server/apiHelpers";
-import { isMemoryMode, memoryPublishVersion } from "../../../../server/memoryStore";
+import { isMemoryMode, memoryRejectVersion } from "../../../../server/memoryStore";
 import { createAuditEvent, getActorRoleCodes } from "../../../../server/policyService";
 import { serializePolicy } from "../../../../server/serializers";
 
-const publishSchema = z.object({
+const rejectSchema = z.object({
   versionId: z.string().min(1),
   actorId: z.string().min(1),
+  reason: z.string().min(3),
 });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -18,64 +19,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const policyId = req.query.id as string;
-    const input = publishSchema.parse(parseRequestBody(req));
+    const input = rejectSchema.parse(parseRequestBody(req));
 
     if (isMemoryMode()) {
-      const result = memoryPublishVersion(policyId, input.versionId, input.actorId);
-      if (!result) return res.status(404).json({ error: "Policy not found" });
+      const result = memoryRejectVersion(policyId, input.versionId, input.actorId, input.reason);
+      if (!result) return res.status(404).json({ error: "Policy or version not found" });
       if ("error" in result) return res.status(400).json({ error: result.error });
       return res.status(200).json(result);
     }
 
     const roleCodes = await getActorRoleCodes(input.actorId);
     if (!roleCodes.includes("POLICY_APPROVER")) {
-      return res.status(403).json({ error: "Only a Policy Approver can publish a policy version." });
+      return res.status(403).json({ error: "Only a Policy Approver can reject a version." });
     }
 
-    const targetVersion = await prisma.policyVersion.findUnique({ where: { id: input.versionId } });
-    if (!targetVersion || targetVersion.policyId !== policyId) {
+    const version = await prisma.policyVersion.findUnique({ where: { id: input.versionId } });
+    if (!version || version.policyId !== policyId) {
       return res.status(404).json({ error: "Policy version not found" });
     }
-    if (targetVersion.status !== "IN_REVIEW") {
-      return res.status(400).json({ error: "Only versions awaiting approval can be published. Submit the version for approval first." });
+    if (version.status !== "IN_REVIEW") {
+      return res.status(400).json({ error: "Only versions awaiting approval can be rejected." });
     }
 
-    const now = new Date();
-
     await prisma.$transaction([
-      prisma.policyVersion.updateMany({
-        where: {
-          policyId,
-          status: "PUBLISHED",
-          id: { not: input.versionId },
-        },
-        data: {
-          status: "ARCHIVED",
-          effectiveTo: now,
-        },
-      }),
       prisma.policyVersion.update({
         where: { id: input.versionId },
-        data: {
-          status: "PUBLISHED",
-          effectiveFrom: now,
-          effectiveTo: null,
-        },
+        data: { status: "DRAFT" },
       }),
       prisma.policy.update({
         where: { id: policyId },
-        data: {
-          status: "PUBLISHED",
-          currentVersionId: input.versionId,
-        },
+        data: { status: "DRAFT" },
       }),
     ]);
 
     await createAuditEvent(
-      "POLICY_VERSION_PUBLISHED",
+      "POLICY_VERSION_REJECTED",
       "PolicyVersion",
       input.versionId,
-      { policyId },
+      { policyId, reason: input.reason },
       input.actorId,
     );
 

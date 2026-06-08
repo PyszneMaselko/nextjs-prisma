@@ -4,6 +4,7 @@ import {
   Button,
   CodeBlock,
   Container,
+  Drawer,
   Heading,
   InlineTip,
   Input,
@@ -23,6 +24,7 @@ import {
   BadgeCheck,
   Beaker,
   BellAlert,
+  Brackets,
   ChartBar,
   ChatBubbleLeftRight,
   DecisionProcess,
@@ -41,7 +43,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import useSWR, { mutate } from "swr";
 import { demoRequestInput } from "../domain/policy/demoData";
 
-type ScreenId = "dashboard" | "requester" | "reviewer" | "policies" | "audit";
+type ScreenId = "dashboard" | "requester" | "reviewer" | "policies" | "approvals" | "audit";
 
 const fetcher = async (url: string) => {
   const response = await fetch(url);
@@ -66,6 +68,25 @@ const decisionLabels: Record<string, string> = {
   REQUIRES_REVIEW: "Requires review",
   REJECTED: "Rejected",
   MISSING_INFORMATION: "Missing information",
+};
+
+const overrideDefaults: Record<string, { reason: string; comment: string }> = {
+  APPROVED: {
+    reason: "Business exception approved for this request.",
+    comment: "Reviewer accepts the risk with compensating control.",
+  },
+  REQUIRES_REVIEW: {
+    reason: "Additional review is required before a final decision can be made.",
+    comment: "Escalating to the reviewer for further assessment of the outstanding concerns.",
+  },
+  REJECTED: {
+    reason: "The request does not meet policy requirements and cannot be approved.",
+    comment: "Reviewer rejects the request based on the identified policy violations.",
+  },
+  MISSING_INFORMATION: {
+    reason: "Required information is missing and must be provided before a decision can be made.",
+    comment: "Requesting additional details from the requester to complete the review.",
+  },
 };
 
 const statusLabels: Record<string, string> = {
@@ -93,6 +114,21 @@ const statusColor = (status?: string | null) => {
   if (["IN_REVIEW", "SUBMITTED"].includes(status ?? "")) return "blue";
   if (status === "REJECTED") return "red";
   if (status === "NEEDS_INFORMATION") return "orange";
+  return "grey";
+};
+
+const policyStatusLabels: Record<string, string> = {
+  DRAFT: "Draft",
+  IN_REVIEW: "In review",
+  PUBLISHED: "Published",
+  ARCHIVED: "Archived",
+};
+
+const policyStatusColor = (status?: string | null) => {
+  if (status === "PUBLISHED") return "green";
+  if (status === "IN_REVIEW") return "blue";
+  if (status === "DRAFT") return "orange";
+  if (status === "ARCHIVED") return "grey";
   return "grey";
 };
 
@@ -130,6 +166,84 @@ const operatorOptions = [
   "not_in",
 ];
 
+const fieldLabels: Record<string, string> = {
+  category: "Category",
+  annualCost: "Annual cost",
+  currency: "Currency",
+  vendorCountry: "Vendor country",
+  processesPersonalData: "Processes personal data",
+  hasDpa: "Has DPA",
+  vendorRisk: "Vendor risk",
+  urgency: "Urgency",
+  department: "Department",
+  dpaDocument: "DPA document",
+  emergencyJustification: "Emergency justification",
+};
+
+const operatorLabels: Record<string, string> = {
+  equals: "is equal to",
+  not_equals: "is not equal to",
+  greater_than: "is greater than",
+  greater_or_equal: "is greater than or equal to",
+  less_than: "is less than",
+  less_or_equal: "is less than or equal to",
+  contains: "contains",
+  not_contains: "does not contain",
+  is_empty: "is empty",
+  is_not_empty: "is not empty",
+  in: "is one of",
+  not_in: "is not one of",
+};
+
+const effectTypeLabels: Record<string, string> = {
+  REQUIRE_REVIEW: "Require review",
+  REQUIRE_FIELD: "Require field",
+  REJECT: "Reject",
+  APPROVE: "Approve",
+  ADD_REASON_CODE: "Add reason code",
+  ADD_RISK_POINTS: "Add risk points",
+};
+
+const effectTypeColor = (type?: string | null) => {
+  if (type === "REJECT") return "red";
+  if (type === "APPROVE") return "green";
+  if (type === "REQUIRE_REVIEW" || type === "REQUIRE_FIELD") return "blue";
+  if (type === "ADD_RISK_POINTS") return "orange";
+  return "grey";
+};
+
+const formatConditionValue = (value: unknown): string => {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) return value.map(formatConditionValue).join(", ");
+  return String(value);
+};
+
+const describeEffect = (effect: any): string => {
+  switch (effect?.type) {
+    case "REQUIRE_REVIEW":
+      return effect.approver
+        ? `Send the request for review to ${effect.approver}`
+        : "Send the request for manual review";
+    case "REQUIRE_FIELD":
+      return effect.label
+        ? `Require the requester to provide "${effect.label}"${effect.field ? ` (${effect.field})` : ""}`
+        : `Require the field "${effect.field ?? "unknown"}"`;
+    case "REJECT":
+      return "Automatically reject the request";
+    case "APPROVE":
+      return "Automatically approve the request";
+    case "ADD_REASON_CODE":
+      return effect.code || effect.label
+        ? `Attach the reason code "${effect.code ?? effect.label}"`
+        : "Attach a reason code to the evaluation";
+    case "ADD_RISK_POINTS":
+      return "Increase the request's risk score";
+    default:
+      return effect?.type ?? "Unknown effect";
+  }
+};
+
 const screenCatalog = [
   {
     id: "dashboard" as ScreenId,
@@ -156,8 +270,15 @@ const screenCatalog = [
     id: "policies" as ScreenId,
     label: "Policy studio",
     description: "Polityki, wersje, reguły i testowanie.",
-    roles: ["POLICY_OWNER", "POLICY_APPROVER", "ADMIN"],
+    roles: ["POLICY_OWNER", "ADMIN"],
     icon: DecisionProcess,
+  },
+  {
+    id: "approvals" as ScreenId,
+    label: "Policy approvals",
+    description: "Przegląd, akceptacja albo odrzucenie wersji przekazanych do publikacji.",
+    roles: ["POLICY_APPROVER", "ADMIN"],
+    icon: BadgeCheck,
   },
   {
     id: "audit" as ScreenId,
@@ -182,7 +303,12 @@ const scenarioCards = [
   {
     title: "Policy Owner",
     icon: TablePen,
-    steps: ["Create policy version", "Add rule", "Test rule", "Publish version"],
+    steps: ["Create policy version", "Add rule", "Test rule", "Submit for approval"],
+  },
+  {
+    title: "Policy Approver",
+    icon: BadgeCheck,
+    steps: ["Open pending versions", "Review rules", "Approve & publish", "Reject with reason"],
   },
   {
     title: "Auditor",
@@ -323,6 +449,170 @@ const DecisionBadge = ({ value }: { value?: string | null }) => (
 const StatusPill = ({ value }: { value?: string | null }) => (
   <StatusBadge color={statusColor(value) as any}>{value ? statusLabels[value] ?? value : "No status"}</StatusBadge>
 );
+
+const PolicyStatusPill = ({ value }: { value?: string | null }) => (
+  <StatusBadge color={policyStatusColor(value) as any}>{value ? policyStatusLabels[value] ?? value : "No status"}</StatusBadge>
+);
+
+const ConditionRow = ({ condition }: { condition: any }) => (
+  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+    <Badge size="2xsmall">{fieldLabels[condition?.field] ?? condition?.field}</Badge>
+    <Text size="small" className="text-ui-fg-subtle">
+      {operatorLabels[condition?.operator] ?? condition?.operator}
+    </Text>
+    {condition?.value !== undefined && condition?.value !== "" && (
+      <Badge size="2xsmall" color="blue">
+        {formatConditionValue(condition.value)}
+      </Badge>
+    )}
+  </div>
+);
+
+const ConditionSummary = ({ condition }: { condition: any }) => {
+  if (!condition) {
+    return <Text size="small" className="text-ui-fg-subtle">No conditions defined — the rule always matches.</Text>;
+  }
+  if (Array.isArray(condition.conditions)) {
+    const combinatorLabel = condition.combinator === "ANY" ? "any" : "all";
+    return (
+      <div className="space-y-1.5">
+        <Text size="small" className="text-ui-fg-subtle">
+          Matches when {combinatorLabel} of the following are true:
+        </Text>
+        <div className="space-y-1.5 border-l-2 border-ui-border-base pl-3">
+          {condition.conditions.map((item: any, index: number) => (
+            <ConditionRow key={index} condition={item} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  return <ConditionRow condition={condition} />;
+};
+
+const EffectSummary = ({ effects }: { effects: any[] }) => {
+  if (!effects || effects.length === 0) {
+    return <Text size="small" className="text-ui-fg-subtle">No effects defined.</Text>;
+  }
+  return (
+    <div className="space-y-1.5">
+      {effects.map((effect: any, index: number) => (
+        <div key={index} className="space-y-0.5">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <Badge size="2xsmall" color={effectTypeColor(effect?.type) as any}>
+              {effectTypeLabels[effect?.type] ?? effect?.type}
+            </Badge>
+            <Text size="small" className="text-ui-fg-subtle">
+              {describeEffect(effect)}
+            </Text>
+          </div>
+          {effect?.nextStep && (
+            <Text size="xsmall" className="pl-1 text-ui-fg-muted">
+              Next step: {effect.nextStep}
+            </Text>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const RuleDetailCard = ({ rule }: { rule: any }) => {
+  const [showJson, setShowJson] = useState(false);
+
+  return (
+    <Container className="space-y-3 bg-ui-bg-subtle p-4">
+      <div className="flex items-center justify-between gap-x-3">
+        <Text weight="plus" size="small">{rule.name}</Text>
+        <Badge size="2xsmall">{rule.severity}</Badge>
+      </div>
+      <Text size="small" className="text-ui-fg-subtle">{rule.description}</Text>
+      <Text size="small">{rule.reason}</Text>
+      <div className="space-y-3 rounded-lg border border-ui-border-base bg-ui-bg-base p-3">
+        <div className="space-y-1.5">
+          <Text size="xsmall" weight="plus" className="uppercase text-ui-fg-muted">
+            Conditions
+          </Text>
+          <ConditionSummary condition={rule.condition} />
+        </div>
+        <div className="space-y-1.5 border-t border-ui-border-base pt-3">
+          <Text size="xsmall" weight="plus" className="uppercase text-ui-fg-muted">
+            Effects
+          </Text>
+          <EffectSummary effects={rule.effects} />
+        </div>
+      </div>
+      <div>
+        <Button type="button" variant="transparent" size="small" onClick={() => setShowJson(current => !current)}>
+          <Brackets className="h-4 w-4" />
+          {showJson ? "Hide raw JSON" : "Show raw JSON"}
+        </Button>
+      </div>
+      {showJson && (
+        <CodeBlock
+          className="rounded-lg"
+          snippets={[
+            { label: "condition", language: "json", code: JSON.stringify(rule.condition, null, 2), hideLineNumbers: true },
+            { label: "effects", language: "json", code: JSON.stringify(rule.effects, null, 2), hideLineNumbers: true },
+          ]}
+        >
+          <CodeBlock.Header />
+          <CodeBlock.Body />
+        </CodeBlock>
+      )}
+    </Container>
+  );
+};
+
+const PolicyDetailDrawer = ({
+  policy,
+  open,
+  onOpenChange,
+}: {
+  policy: any;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) => {
+  const version = policy?.versions?.find((item: any) => item.id === policy.currentVersionId) ?? policy?.versions?.[0];
+
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <Drawer.Content className="z-50" overlayProps={{ className: "z-50" }}>
+        <Drawer.Header>
+          <Drawer.Title>{policy?.name ?? "Policy details"}</Drawer.Title>
+          <Drawer.Description>{policy?.description ?? "Szczegóły polityki i reguł aktywnej wersji."}</Drawer.Description>
+        </Drawer.Header>
+        <Drawer.Body className="space-y-5 overflow-y-auto">
+          {policy && (
+            <>
+              <div className="flex items-center gap-x-2">
+                <PolicyStatusPill value={policy.status} />
+                <Badge size="2xsmall">{policy.domain}</Badge>
+              </div>
+              {version ? (
+                <>
+                  <div>
+                    <Text weight="plus">Version {version.versionNumber}</Text>
+                    <Text size="small" className="text-ui-fg-subtle">{version.changeSummary}</Text>
+                  </div>
+                  <div className="space-y-3">
+                    <Text weight="plus">Rules</Text>
+                    {(version.rules ?? []).map((rule: any) => (
+                      <RuleDetailCard key={rule.id} rule={rule} />
+                    ))}
+                    {(version.rules ?? []).length === 0 && <Text size="small">No rules in this version.</Text>}
+                  </div>
+                </>
+              ) : (
+                <Text size="small">This policy has no versions yet.</Text>
+              )}
+            </>
+          )}
+        </Drawer.Body>
+      </Drawer.Content>
+    </Drawer>
+  );
+};
 
 const EmptyState = ({ title, body }: { title: string; body: string }) => (
   <Container className="flex min-h-[180px] flex-col items-center justify-center gap-y-2 border border-dashed border-ui-border-base bg-ui-bg-subtle text-center">
@@ -522,6 +812,11 @@ const Home: NextPage = () => {
     publish: false,
   });
   const [selectedVersionId, setSelectedVersionId] = useState("");
+  const [selectedPolicyId, setSelectedPolicyId] = useState("");
+  const [selectedApprovalVersionId, setSelectedApprovalVersionId] = useState("");
+  const [rejectForm, setRejectForm] = useState({
+    reason: "Próg kosztowy wymaga dodatkowego uzasadnienia biznesowego przed publikacją.",
+  });
   const [ruleRows, setRuleRows] = useState([{ field: "annualCost", operator: "greater_than", value: "10000" }]);
   const [ruleForm, setRuleForm] = useState({
     name: "Koszt powyżej 10 000 EUR wymaga review",
@@ -574,6 +869,9 @@ const Home: NextPage = () => {
   const versions = policies.flatMap((policy: any) =>
     (policy.versions ?? []).map((version: any) => ({ ...version, policy })),
   );
+  const pendingApprovalVersions = versions.filter((version: any) => version.status === "IN_REVIEW");
+  const selectedApprovalVersion = pendingApprovalVersions.find((version: any) => version.id === selectedApprovalVersionId);
+  const selectedPolicyDetail = policies.find((policy: any) => policy.id === selectedPolicyId);
 
   useEffect(() => {
     if (!selectedRequestId && requests[0]) setSelectedRequestId(requests[0].id);
@@ -589,6 +887,12 @@ const Home: NextPage = () => {
     const draft = versions.find((version: any) => ["DRAFT", "IN_REVIEW"].includes(version.status));
     if (!selectedVersionId && draft) setSelectedVersionId(draft.id);
   }, [selectedVersionId, versions]);
+
+  useEffect(() => {
+    if (!pendingApprovalVersions.some((version: any) => version.id === selectedApprovalVersionId)) {
+      setSelectedApprovalVersionId(pendingApprovalVersions[0]?.id ?? "");
+    }
+  }, [pendingApprovalVersions, selectedApprovalVersionId]);
 
   const options = (items: string[] = [], includeAll = false) => [
     ...(includeAll ? [{ value: "__ALL__", label: "All" }] : []),
@@ -723,15 +1027,39 @@ const Home: NextPage = () => {
     }, "Rule added to draft version");
   };
 
-  const publishVersion = () =>
+  const submitVersionForApproval = () =>
     runAction(async () => {
       const version = versions.find((item: any) => item.id === selectedVersionId);
       if (!version) throw new Error("Choose a policy version first");
-      await postJson(`/api/policies/${version.policyId}/publish`, {
+      await postJson(`/api/policies/${version.policyId}/submit-for-approval`, {
         versionId: selectedVersionId,
         actorId,
       });
-    }, "Policy version published");
+    }, "Version submitted for approval");
+
+  const approveAndPublishVersion = (versionId: string) =>
+    runAction(async () => {
+      const version = pendingApprovalVersions.find((item: any) => item.id === versionId);
+      if (!version) throw new Error("Choose a version awaiting approval first");
+      await postJson(`/api/policies/${version.policyId}/publish`, {
+        versionId,
+        actorId,
+      });
+      setSelectedApprovalVersionId("");
+    }, "Policy version approved and published");
+
+  const rejectVersion = (event: FormEvent) => {
+    event.preventDefault();
+    if (!selectedApprovalVersion) return;
+    return runAction(async () => {
+      await postJson(`/api/policies/${selectedApprovalVersion.policyId}/reject`, {
+        versionId: selectedApprovalVersion.id,
+        actorId,
+        reason: rejectForm.reason,
+      });
+      setSelectedApprovalVersionId("");
+    }, "Policy version rejected");
+  };
 
   const runRuleTest = (includeDraftRule: boolean) =>
     runAction(async () => {
@@ -1063,7 +1391,7 @@ const Home: NextPage = () => {
                         <InlineTip label="Manual override is audited" variant="warning">
                           The original system decision stays intact. The manual decision is stored as a separate audit entry.
                         </InlineTip>
-                        <SelectField label="New decision" value={overrideForm.newDecision} onValueChange={value => setOverrideForm(current => ({ ...current, newDecision: value }))} options={options(Object.keys(decisionLabels))} />
+                        <SelectField label="New decision" value={overrideForm.newDecision} onValueChange={value => setOverrideForm(current => ({ ...current, newDecision: value, reason: overrideDefaults[value]?.reason ?? current.reason, comment: overrideDefaults[value]?.comment ?? current.comment }))} options={options(Object.keys(decisionLabels))} />
                         <SelectField label="Exception approver" value={overrideForm.approverId} onValueChange={value => setOverrideForm(current => ({ ...current, approverId: value }))} options={userOptions()} />
                         <TextField label="Reason" value={overrideForm.reason} onChange={value => setOverrideForm(current => ({ ...current, reason: value }))} />
                         <TextareaField label="Comment" value={overrideForm.comment} onChange={value => setOverrideForm(current => ({ ...current, comment: value }))} />
@@ -1100,7 +1428,7 @@ const Home: NextPage = () => {
                 </Container>
 
                 <Container className="overflow-hidden p-0">
-                  <SectionHeader title="Policy registry" description="Opublikowana wersja jest używana przy nowych ocenach." />
+                  <SectionHeader title="Policy registry" description="Opublikowana wersja jest używana przy nowych ocenach. Kliknij wiersz, aby zobaczyć szczegóły reguł." />
                   <Table>
                     <Table.Header>
                       <Table.Row>
@@ -1112,10 +1440,10 @@ const Home: NextPage = () => {
                     </Table.Header>
                     <Table.Body>
                       {policies.map((policy: any) => (
-                        <Table.Row key={policy.id}>
+                        <Table.Row key={policy.id} className="cursor-pointer" onClick={() => setSelectedPolicyId(policy.id)}>
                           <Table.Cell>{policy.name}</Table.Cell>
                           <Table.Cell>{policy.domain}</Table.Cell>
-                          <Table.Cell><StatusPill value={policy.status} /></Table.Cell>
+                          <Table.Cell><PolicyStatusPill value={policy.status} /></Table.Cell>
                           <Table.Cell>{policy.versions?.length ?? 0}</Table.Cell>
                         </Table.Row>
                       ))}
@@ -1124,15 +1452,23 @@ const Home: NextPage = () => {
                 </Container>
               </div>
 
+              <PolicyDetailDrawer
+                policy={selectedPolicyDetail}
+                open={Boolean(selectedPolicyId)}
+                onOpenChange={open => {
+                  if (!open) setSelectedPolicyId("");
+                }}
+              />
+
               <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                 <Container className="p-0">
                   <SectionHeader
                     title="Rule builder"
                     description="Condition builder zamiast surowego JSON albo eval."
                     action={
-                      <Button onClick={publishVersion}>
+                      <Button onClick={submitVersionForApproval}>
                         <BadgeCheck className="h-4 w-4" />
-                        Publish selected version
+                        Submit for approval
                       </Button>
                     }
                   />
@@ -1236,6 +1572,93 @@ const Home: NextPage = () => {
                   </div>
                 </Container>
               </div>
+            </div>
+          )}
+
+          {activeScreen === "approvals" && (
+            <div className="grid gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
+              <Container className="p-0">
+                <SectionHeader title="Pending approvals" description="Wersje przekazane przez Policy Ownera i czekające na decyzję." />
+                {pendingApprovalVersions.length === 0 && (
+                  <div className="p-6">
+                    <EmptyState title="No versions awaiting approval" body="Policy Owner nie przekazał jeszcze żadnej wersji do publikacji." />
+                  </div>
+                )}
+                {pendingApprovalVersions.length > 0 && (
+                  <Table>
+                    <Table.Header>
+                      <Table.Row>
+                        <Table.HeaderCell>Policy</Table.HeaderCell>
+                        <Table.HeaderCell>Version</Table.HeaderCell>
+                        <Table.HeaderCell>Author</Table.HeaderCell>
+                      </Table.Row>
+                    </Table.Header>
+                    <Table.Body>
+                      {pendingApprovalVersions.map((version: any) => (
+                        <Table.Row
+                          key={version.id}
+                          className={selectedApprovalVersionId === version.id ? "bg-ui-bg-highlight" : "cursor-pointer"}
+                          onClick={() => setSelectedApprovalVersionId(version.id)}
+                        >
+                          <Table.Cell>{version.policy.name}</Table.Cell>
+                          <Table.Cell>v{version.versionNumber}</Table.Cell>
+                          <Table.Cell>{version.author?.name ?? "—"}</Table.Cell>
+                        </Table.Row>
+                      ))}
+                    </Table.Body>
+                  </Table>
+                )}
+              </Container>
+
+              <Container className="p-0">
+                <SectionHeader
+                  title="Approval workspace"
+                  description="Przegląd reguł oraz akceptacja, publikacja albo odrzucenie wersji."
+                  action={
+                    selectedApprovalVersion ? (
+                      <Button onClick={() => approveAndPublishVersion(selectedApprovalVersion.id)}>
+                        <BadgeCheck className="h-4 w-4" />
+                        Approve &amp; publish
+                      </Button>
+                    ) : undefined
+                  }
+                />
+                <div className="space-y-5 p-6">
+                  {!selectedApprovalVersion && (
+                    <EmptyState title="Choose a version" body="Wybierz wersję z listy, aby zobaczyć jej reguły i podjąć decyzję." />
+                  )}
+                  {selectedApprovalVersion && (
+                    <>
+                      <div className="flex items-center justify-between gap-x-3">
+                        <div>
+                          <Text weight="plus">
+                            {selectedApprovalVersion.policy.name} · v{selectedApprovalVersion.versionNumber}
+                          </Text>
+                          <Text size="small" className="text-ui-fg-subtle">
+                            {selectedApprovalVersion.changeSummary}
+                          </Text>
+                        </div>
+                        <PolicyStatusPill value={selectedApprovalVersion.status} />
+                      </div>
+                      <div className="space-y-3">
+                        <Text weight="plus">Rules in this version</Text>
+                        {(selectedApprovalVersion.rules ?? []).map((rule: any) => (
+                          <RuleDetailCard key={rule.id} rule={rule} />
+                        ))}
+                        {(selectedApprovalVersion.rules ?? []).length === 0 && <Text size="small">No rules in this version.</Text>}
+                      </div>
+                      <form onSubmit={rejectVersion} className="space-y-3 border-t border-ui-border-base pt-5">
+                        <Text weight="plus">Reject version</Text>
+                        <TextareaField label="Reason" value={rejectForm.reason} onChange={value => setRejectForm({ reason: value })} />
+                        <Button type="submit" variant="secondary">
+                          <ArrowPath className="h-4 w-4" />
+                          Reject and send back to draft
+                        </Button>
+                      </form>
+                    </>
+                  )}
+                </div>
+              </Container>
             </div>
           )}
 

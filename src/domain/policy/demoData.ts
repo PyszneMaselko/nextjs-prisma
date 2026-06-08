@@ -56,7 +56,13 @@ export const demoUsers = [
     id: "user-policy-owner",
     name: "Nina Policy Owner",
     email: "nina.policy@example.com",
-    roles: ["POLICY_OWNER", "POLICY_APPROVER"],
+    roles: ["POLICY_OWNER"],
+  },
+  {
+    id: "user-policy-approver",
+    name: "Marek Policy Approver",
+    email: "marek.approver@example.com",
+    roles: ["POLICY_APPROVER"],
   },
   {
     id: "user-auditor",
@@ -260,6 +266,38 @@ export const demoPolicyVersions: PolicyVersionDefinition[] = [
     ],
   },
 ];
+
+export const demoPendingApprovalVersion = {
+  id: "version-procurement-v2-pending",
+  policyId: "policy-procurement",
+  versionNumber: 2,
+  changeSummary: "Obniżenie progu oceny zakupów SaaS z 5 000 EUR do 3 000 EUR.",
+  authorId: "user-policy-owner",
+  rule: {
+    id: "rule-saas-over-3000-pending",
+    name: "SaaS powyżej 3 000 EUR wymaga oceny zakupów",
+    description: "Obniżony próg kosztowy wymagający oceny działu zakupów dla zakupów SaaS.",
+    severity: "WARNING" as const,
+    condition: {
+      combinator: "ALL",
+      conditions: [
+        { field: "category", operator: "equals", value: "SAAS" },
+        { field: "currency", operator: "equals", value: "EUR" },
+        { field: "annualCost", operator: "greater_than", value: 3000 },
+      ],
+    },
+    effects: [
+      {
+        type: "REQUIRE_REVIEW",
+        approver: "Procurement",
+        nextStep: "Uzyskaj ocenę działu zakupów.",
+      },
+    ],
+    reason: "Roczny koszt przekracza nowy próg 3 000 EUR, wymagana jest ocena działu zakupów.",
+    enabled: true,
+    priority: 10,
+  },
+};
 
 export const demoRequestInput = {
   title: "Acme Analytics dla zespołu marketingu",
