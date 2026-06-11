@@ -851,6 +851,182 @@ const RuleDetailCard = ({ rule }: { rule: any }) => {
   );
 };
 
+const inputSnapshotFieldLabels: Record<string, string> = {
+  title: "Title",
+  vendorName: "Vendor name",
+  type: "Type",
+  category: "Category",
+  annualCost: "Annual cost",
+  currency: "Currency",
+  department: "Department",
+  urgency: "Urgency",
+  vendorCountry: "Vendor country",
+  vendorRisk: "Vendor risk",
+  processesPersonalData: "Processes personal data",
+  dataClassification: "Data classification",
+  hasDpa: "Has DPA",
+  transfersOutsideEea: "Transfers outside EEA",
+  requiresSecurityQuestionnaire: "Security questionnaire required",
+};
+
+const inputSnapshotFieldOrder = Object.keys(inputSnapshotFieldLabels);
+
+const FactRow = ({ fact }: { fact: any }) => (
+  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+    <Badge size="2xsmall" className={wrappingBadgeClassName}>
+      {fieldLabels[fact.field] ?? fact.field}
+    </Badge>
+    <Text size="small" className="text-ui-fg-subtle">
+      {operatorLabels[fact.operator] ?? fact.operator}
+    </Text>
+    <Badge size="2xsmall" color="blue" className={wrappingBadgeClassName}>
+      {formatConditionValue(fact.expected)}
+    </Badge>
+    <Text size="xsmall" className="text-ui-fg-muted">→ actual:</Text>
+    <Badge
+      size="2xsmall"
+      color={fact.matched ? "green" : "red"}
+      className={wrappingBadgeClassName}
+    >
+      {formatConditionValue(fact.actual)}
+    </Badge>
+  </div>
+);
+
+const RuleResultCard = ({ rule }: { rule: any }) => {
+  const [showJson, setShowJson] = useState(false);
+  return (
+    <Container className={`space-y-3 p-4 ${rule.matched ? "bg-ui-bg-subtle" : "bg-ui-bg-base"}`}>
+      <div className="flex items-start justify-between gap-x-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <StatusBadge color={rule.matched ? "green" : "grey"}>
+            {rule.matched ? "Matched" : "No match"}
+          </StatusBadge>
+          <Text weight="plus" size="small" className="min-w-0 break-words">
+            {rule.ruleName}
+          </Text>
+        </div>
+        <Badge size="2xsmall" className="shrink-0">{rule.severity}</Badge>
+      </div>
+      <Text size="xsmall" className="text-ui-fg-muted">
+        {rule.policyName} v{rule.policyVersionNumber}
+      </Text>
+      {rule.matched && rule.reason && (
+        <Text size="small">{rule.reason}</Text>
+      )}
+      {(rule.facts ?? []).length > 0 && (
+        <div className="space-y-1.5 rounded-lg border border-ui-border-base bg-ui-bg-base p-3">
+          <Text size="xsmall" weight="plus" className="uppercase text-ui-fg-muted">
+            Facts
+          </Text>
+          <div className="space-y-1.5 border-t border-ui-border-base pt-2">
+            {rule.facts.map((fact: any, i: number) => (
+              <FactRow key={i} fact={fact} />
+            ))}
+          </div>
+        </div>
+      )}
+      {rule.matched && (rule.effects ?? []).length > 0 && (
+        <div className="space-y-1.5 rounded-lg border border-ui-border-base bg-ui-bg-base p-3">
+          <Text size="xsmall" weight="plus" className="uppercase text-ui-fg-muted">
+            Effects
+          </Text>
+          <div className="border-t border-ui-border-base pt-2">
+            <EffectSummary effects={rule.effects} />
+          </div>
+        </div>
+      )}
+      <div>
+        <Button type="button" variant="transparent" size="small" onClick={() => setShowJson(c => !c)}>
+          <Brackets className="h-4 w-4" />
+          {showJson ? "Hide raw JSON" : "Show raw JSON"}
+        </Button>
+      </div>
+      {showJson && (
+        <CodeBlock
+          className="rounded-lg"
+          snippets={[
+            { label: "facts", language: "json", code: JSON.stringify(rule.facts, null, 2), hideLineNumbers: true },
+            { label: "effects", language: "json", code: JSON.stringify(rule.effects, null, 2), hideLineNumbers: true },
+          ]}
+        >
+          <CodeBlock.Header />
+          <CodeBlock.Body />
+        </CodeBlock>
+      )}
+    </Container>
+  );
+};
+
+const EvaluationDetail = ({ evaluation }: { evaluation: any }) => {
+  const [showRaw, setShowRaw] = useState(false);
+  const input: Record<string, unknown> = evaluation.inputSnapshot ?? {};
+  const result = evaluation.resultSnapshot ?? {};
+  const allRules: any[] = result.ruleResults ?? [];
+  const matched = allRules.filter(r => r.matched);
+  const unmatched = allRules.filter(r => !r.matched);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <Text weight="plus" className="mb-3">Request snapshot</Text>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {inputSnapshotFieldOrder.map(field => {
+            const val = input[field];
+            if (val === undefined || val === null || val === "") return null;
+            return (
+              <div key={field} className="rounded-lg border border-ui-border-base bg-ui-bg-subtle px-3 py-2">
+                <Text size="xsmall" className="text-ui-fg-muted">
+                  {inputSnapshotFieldLabels[field]}
+                </Text>
+                <Text size="small" weight="plus" className="mt-0.5 break-words">
+                  {formatConditionValue(val)}
+                </Text>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div>
+        <Text weight="plus" className="mb-3">
+          Rule results{" "}
+          <Badge size="2xsmall" color="green">{matched.length} matched</Badge>
+          {unmatched.length > 0 && (
+            <Badge size="2xsmall" color="grey" className="ml-1">{unmatched.length} not matched</Badge>
+          )}
+        </Text>
+        <div className="space-y-3">
+          {matched.map((rule: any, i: number) => <RuleResultCard key={i} rule={rule} />)}
+          {unmatched.map((rule: any, i: number) => <RuleResultCard key={`u-${i}`} rule={rule} />)}
+          {allRules.length === 0 && (
+            <Text size="small" className="text-ui-fg-subtle">No rules evaluated.</Text>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <Button type="button" variant="transparent" size="small" onClick={() => setShowRaw(c => !c)}>
+          <Brackets className="h-4 w-4" />
+          {showRaw ? "Hide raw JSON" : "Show raw JSON"}
+        </Button>
+      </div>
+      {showRaw && (
+        <CodeBlock
+          className="rounded-lg"
+          snippets={[
+            { label: "inputSnapshot", language: "json", code: JSON.stringify(input, null, 2), hideLineNumbers: true },
+            { label: "resultSnapshot", language: "json", code: JSON.stringify(result, null, 2), hideLineNumbers: true },
+          ]}
+        >
+          <CodeBlock.Header />
+          <CodeBlock.Body />
+        </CodeBlock>
+      )}
+    </div>
+  );
+};
+
 const PolicyDetailDrawer = ({
   policy,
   open,
@@ -3124,26 +3300,7 @@ const Home: NextPage = () => {
                     </Container>
                   </div>
                   {selectedEvaluation && (
-                    <CodeBlock
-                      className="rounded-lg"
-                      snippets={[
-                        {
-                          label: "inputSnapshot",
-                          language: "json",
-                          code: JSON.stringify(selectedEvaluation.inputSnapshot, null, 2),
-                          hideLineNumbers: true,
-                        },
-                        {
-                          label: "resultSnapshot",
-                          language: "json",
-                          code: JSON.stringify(selectedEvaluation.resultSnapshot, null, 2),
-                          hideLineNumbers: true,
-                        },
-                      ]}
-                    >
-                      <CodeBlock.Header />
-                      <CodeBlock.Body />
-                    </CodeBlock>
+                    <EvaluationDetail evaluation={selectedEvaluation} />
                   )}
                 </div>
               </Container>
