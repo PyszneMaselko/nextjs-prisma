@@ -7,8 +7,8 @@ import {
 import {
   demoPendingApprovalVersion,
   demoPolicyVersions,
-  demoRequestInput,
   demoRoles,
+  demoSeedRequests,
   demoUsers,
 } from "../domain/policy/demoData";
 import { evaluatePolicyVersions } from "../domain/policy/ruleEngine";
@@ -375,47 +375,114 @@ export const resetDemoData = async () => {
     demoPendingApprovalVersion.authorId,
   );
 
-  const request = await prisma.request.create({
-    data: {
-      id: "request-demo-acme-analytics",
-      title: demoRequestInput.title,
-      description: demoRequestInput.description,
-      type: demoRequestInput.type as any,
-      category: demoRequestInput.category as any,
-      status: "SUBMITTED",
-      annualCost: demoRequestInput.annualCost,
-      currency: demoRequestInput.currency as any,
-      vendorName: demoRequestInput.vendorName,
-      vendorCountry: demoRequestInput.vendorCountry,
-      department: demoRequestInput.department as any,
-      urgency: demoRequestInput.urgency as any,
-      justification: demoRequestInput.justification,
-      processesPersonalData: demoRequestInput.processesPersonalData,
-      dataCategories: demoRequestInput.dataCategories,
-      dataClassification: demoRequestInput.dataClassification as any,
-      hasDpa: demoRequestInput.hasDpa,
-      transfersOutsideEea: demoRequestInput.transfersOutsideEea,
-      requiresSecurityQuestionnaire: demoRequestInput.requiresSecurityQuestionnaire,
-      vendorRisk: demoRequestInput.vendorRisk as any,
-      inputData: demoRequestInput as any,
-      requesterId: demoRequestInput.requesterId,
-      businessOwnerId: demoRequestInput.businessOwnerId,
-      budgetOwnerId: demoRequestInput.budgetOwnerId,
-    },
-  });
+  const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
 
-  await prisma.requestComment.create({
-    data: {
-      requestId: request.id,
-      authorId: "user-requester",
-      visibility: "PUBLIC",
-      body: "Demo: zakup SaaS za 8 000 EUR bez DPA, zgodnie ze scenariuszem z dokumentu.",
-    },
-  });
+  for (const seed of demoSeedRequests) {
+    const createdAt = daysAgo(seed.daysAgo);
+    const input = seed.input;
 
-  await evaluateRequestAndPersist(request.id, "user-requester");
+    await prisma.request.create({
+      data: {
+        id: seed.id,
+        title: input.title,
+        description: input.description,
+        type: input.type as any,
+        category: input.category as any,
+        status: seed.mode === "draft" ? "DRAFT" : "SUBMITTED",
+        annualCost: input.annualCost,
+        currency: input.currency as any,
+        vendorName: input.vendorName,
+        vendorCountry: input.vendorCountry,
+        department: input.department as any,
+        urgency: input.urgency as any,
+        justification: input.justification,
+        processesPersonalData: input.processesPersonalData,
+        dataCategories: input.dataCategories ?? [],
+        dataClassification: (input.dataClassification ?? "NONE") as any,
+        hasDpa: input.hasDpa ?? false,
+        transfersOutsideEea: input.transfersOutsideEea ?? false,
+        requiresSecurityQuestionnaire: input.requiresSecurityQuestionnaire ?? false,
+        vendorRisk: (input.vendorRisk ?? "UNKNOWN") as any,
+        inputData: input as any,
+        requesterId: input.requesterId,
+        businessOwnerId: input.businessOwnerId,
+        budgetOwnerId: input.budgetOwnerId ?? null,
+        createdAt,
+      },
+    });
 
-  return getRequestDetail(request.id);
+    for (const comment of seed.comments ?? []) {
+      await prisma.requestComment.create({
+        data: {
+          requestId: seed.id,
+          authorId: comment.authorId,
+          visibility: comment.visibility as any,
+          body: comment.body,
+          createdAt,
+        },
+      });
+    }
+
+    for (const attachment of seed.attachments ?? []) {
+      await prisma.requestAttachment.create({
+        data: {
+          requestId: seed.id,
+          uploadedById: attachment.uploadedById,
+          attachmentType: attachment.attachmentType as any,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          storageKey: `metadata:${attachment.fileName}`,
+          createdAt,
+        },
+      });
+    }
+
+    if (seed.mode !== "submit") continue;
+
+    await evaluateRequestAndPersist(seed.id, input.requesterId);
+
+    if (seed.override) {
+      const current = await prisma.request.findUnique({ where: { id: seed.id } });
+      const override = await prisma.manualOverride.create({
+        data: {
+          requestId: seed.id,
+          originalDecision: current?.decision ?? null,
+          newDecision: seed.override.newDecision as any,
+          isException: seed.override.exception,
+          reason: seed.override.reason,
+          comment: seed.override.comment,
+          approverId: seed.override.approverId,
+          createdById: seed.override.createdById,
+        },
+      });
+
+      await prisma.request.update({
+        where: { id: seed.id },
+        data: {
+          status: statusForReviewerDecision(
+            seed.override.newDecision as Decision,
+            seed.override.exception,
+          ) as any,
+        },
+      });
+
+      await createAuditEvent(
+        seed.override.exception ? "REQUEST_DECISION_OVERRIDDEN" : "REQUEST_REVIEW_DECIDED",
+        "Request",
+        seed.id,
+        {
+          overrideId: override.id,
+          originalDecision: current?.decision ?? null,
+          newDecision: seed.override.newDecision,
+          exception: seed.override.exception,
+        },
+        seed.override.createdById,
+      );
+    }
+  }
+
+  return getRequestDetail("request-demo-acme-analytics");
 };
 
 export const evaluateDraftInput = async (

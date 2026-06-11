@@ -5,10 +5,12 @@ import { isMemoryMode, memoryAddAttachment } from "../../../../server/memoryStor
 import {
   createAuditEvent,
   evaluateRequestAndPersist,
+  getActorRoleCodes,
   getRequestDetail,
 } from "../../../../server/policyService";
 import { serializeRequest } from "../../../../server/serializers";
 import { attachmentSchema } from "../../../../server/schemas";
+import { hideInternalComments } from "../../../../server/requestAccess";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
@@ -22,7 +24,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (isMemoryMode()) {
       const request = memoryAddAttachment(requestId, input);
       if (!request) return res.status(404).json({ error: "Request not found" });
+      if ("error" in request) return res.status(403).json({ error: request.error });
       return res.status(201).json({ request });
+    }
+
+    const accessRequest = await prisma.request.findUnique({
+      where: { id: requestId },
+      select: { requesterId: true },
+    });
+    if (!accessRequest) return res.status(404).json({ error: "Request not found" });
+
+    const roleCodes = await getActorRoleCodes(input.uploadedById);
+    const canReview = roleCodes.some(role => ["REVIEWER", "ADMIN"].includes(role));
+    const ownsRequest =
+      roleCodes.includes("REQUESTER") && accessRequest.requesterId === input.uploadedById;
+    if (!canReview && !ownsRequest) {
+      return res.status(403).json({
+        error: "You do not have permission to add attachments to this request.",
+      });
     }
 
     await prisma.requestAttachment.create({
@@ -37,8 +56,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       },
     });
 
+    let requestStatus: string | undefined;
     if (input.attachmentType === "DPA") {
       const request = await prisma.request.findUnique({ where: { id: requestId } });
+      requestStatus = request?.status;
       const inputData =
         request?.inputData && typeof request.inputData === "object"
           ? (request.inputData as Record<string, unknown>)
@@ -66,11 +87,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
 
     const request =
-      input.attachmentType === "DPA"
+      input.attachmentType === "DPA" && requestStatus === "NEEDS_INFORMATION"
         ? await evaluateRequestAndPersist(requestId, input.uploadedById)
         : await getRequestDetail(requestId);
 
-    return res.status(201).json({ request: serializeRequest(request) });
+    return res.status(201).json({
+      request: hideInternalComments(serializeRequest(request), roleCodes),
+    });
   } catch (error) {
     return handleApiError(res, error);
   }

@@ -20,6 +20,7 @@ import {
   toast,
 } from "@medusajs/ui";
 import {
+  ArrowDownTray,
   ArrowPath,
   BadgeCheck,
   Beaker,
@@ -718,19 +719,19 @@ const FormSection = ({
 );
 
 const DecisionBadge = ({ value }: { value?: string | null }) => (
-  <StatusBadge className="shrink-0 whitespace-nowrap" color={decisionColor(value) as any}>
+  <StatusBadge className={`${wrappingBadgeClassName} shrink-0`} color={decisionColor(value) as any}>
     {value ? decisionLabels[value] ?? value : "No decision"}
   </StatusBadge>
 );
 
 const StatusPill = ({ value }: { value?: string | null }) => (
-  <StatusBadge className="shrink-0 whitespace-nowrap" color={statusColor(value) as any}>
+  <StatusBadge className={`${wrappingBadgeClassName} shrink-0`} color={statusColor(value) as any}>
     {value ? statusLabels[value] ?? value : "No status"}
   </StatusBadge>
 );
 
 const PolicyStatusPill = ({ value }: { value?: string | null }) => (
-  <StatusBadge className="shrink-0 whitespace-nowrap" color={policyStatusColor(value) as any}>
+  <StatusBadge className={`${wrappingBadgeClassName} shrink-0`} color={policyStatusColor(value) as any}>
     {value ? policyStatusLabels[value] ?? value : "No status"}
   </StatusBadge>
 );
@@ -853,6 +854,7 @@ const RuleDetailCard = ({ rule }: { rule: any }) => {
 
 const inputSnapshotFieldLabels: Record<string, string> = {
   title: "Title",
+  description: "Description",
   vendorName: "Vendor name",
   type: "Type",
   category: "Category",
@@ -860,124 +862,233 @@ const inputSnapshotFieldLabels: Record<string, string> = {
   currency: "Currency",
   department: "Department",
   urgency: "Urgency",
+  justification: "Business justification",
   vendorCountry: "Vendor country",
   vendorRisk: "Vendor risk",
   processesPersonalData: "Processes personal data",
+  dataCategories: "Data categories",
   dataClassification: "Data classification",
   hasDpa: "Has DPA",
   transfersOutsideEea: "Transfers outside EEA",
   requiresSecurityQuestionnaire: "Security questionnaire required",
+  dpaDocument: "DPA document",
+  emergencyJustification: "Emergency justification",
 };
 
 const inputSnapshotFieldOrder = Object.keys(inputSnapshotFieldLabels);
 
 const FactRow = ({ fact }: { fact: any }) => (
-  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
-    <Badge size="2xsmall" className={wrappingBadgeClassName}>
-      {fieldLabels[fact.field] ?? fact.field}
-    </Badge>
-    <Text size="small" className="text-ui-fg-subtle">
-      {operatorLabels[fact.operator] ?? fact.operator}
-    </Text>
-    <Badge size="2xsmall" color="blue" className={wrappingBadgeClassName}>
-      {formatConditionValue(fact.expected)}
-    </Badge>
-    <Text size="xsmall" className="text-ui-fg-muted">→ actual:</Text>
-    <Badge
-      size="2xsmall"
-      color={fact.matched ? "green" : "red"}
-      className={wrappingBadgeClassName}
-    >
-      {formatConditionValue(fact.actual)}
-    </Badge>
+  <div className="grid gap-2 rounded-md bg-ui-bg-subtle px-3 py-2 sm:grid-cols-[minmax(120px,0.8fr)_minmax(0,1.2fr)_minmax(0,0.8fr)] sm:items-center">
+    <div>
+      <Text size="xsmall" className="text-ui-fg-muted">Field</Text>
+      <Text size="small" weight="plus" className="break-words">
+        {fieldLabels[fact.field] ?? fact.field}
+      </Text>
+    </div>
+    <div>
+      <Text size="xsmall" className="text-ui-fg-muted">Expected</Text>
+      <Text size="small" className="break-words">
+        {operatorLabels[fact.operator] ?? fact.operator} {formatConditionValue(fact.expected)}
+      </Text>
+    </div>
+    <div>
+      <Text size="xsmall" className="text-ui-fg-muted">Actual</Text>
+      <div className="mt-0.5">
+        <Badge
+          size="2xsmall"
+          color={fact.matched ? "green" : "red"}
+          className={wrappingBadgeClassName}
+        >
+          {formatConditionValue(fact.actual)}
+        </Badge>
+      </div>
+    </div>
   </div>
 );
 
 const RuleResultCard = ({ rule }: { rule: any }) => {
-  const [showJson, setShowJson] = useState(false);
   return (
-    <Container className={`space-y-3 p-4 ${rule.matched ? "bg-ui-bg-subtle" : "bg-ui-bg-base"}`}>
-      <div className="flex items-start justify-between gap-x-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+    <Container className={`overflow-hidden p-0 ${rule.matched ? "bg-ui-bg-subtle" : "bg-ui-bg-base"}`}>
+      <div className="flex flex-col gap-3 border-b border-ui-border-base px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <Text weight="plus" size="small" className="min-w-0 break-words">
+              {rule.ruleName}
+            </Text>
+            <Badge size="2xsmall" className="shrink-0">{rule.severity}</Badge>
+          </div>
+          <Text size="xsmall" className="text-ui-fg-muted">
+            {rule.policyName} v{rule.policyVersionNumber}
+          </Text>
+        </div>
+        <div className="shrink-0">
           <StatusBadge color={rule.matched ? "green" : "grey"}>
             {rule.matched ? "Matched" : "No match"}
           </StatusBadge>
-          <Text weight="plus" size="small" className="min-w-0 break-words">
-            {rule.ruleName}
-          </Text>
         </div>
-        <Badge size="2xsmall" className="shrink-0">{rule.severity}</Badge>
       </div>
-      <Text size="xsmall" className="text-ui-fg-muted">
-        {rule.policyName} v{rule.policyVersionNumber}
-      </Text>
-      {rule.matched && rule.reason && (
-        <Text size="small">{rule.reason}</Text>
-      )}
-      {(rule.facts ?? []).length > 0 && (
-        <div className="space-y-1.5 rounded-lg border border-ui-border-base bg-ui-bg-base p-3">
-          <Text size="xsmall" weight="plus" className="uppercase text-ui-fg-muted">
-            Facts
-          </Text>
-          <div className="space-y-1.5 border-t border-ui-border-base pt-2">
-            {rule.facts.map((fact: any, i: number) => (
-              <FactRow key={i} fact={fact} />
-            ))}
+      <div className="space-y-4 p-4">
+        {rule.reason && (
+          <div>
+            <Text size="xsmall" weight="plus" className="text-ui-fg-muted">Business reason</Text>
+            <Text size="small" className="mt-1">{rule.reason}</Text>
           </div>
-        </div>
-      )}
-      {rule.matched && (rule.effects ?? []).length > 0 && (
-        <div className="space-y-1.5 rounded-lg border border-ui-border-base bg-ui-bg-base p-3">
-          <Text size="xsmall" weight="plus" className="uppercase text-ui-fg-muted">
-            Effects
-          </Text>
-          <div className="border-t border-ui-border-base pt-2">
+        )}
+        {(rule.facts ?? []).length > 0 && (
+          <div className="space-y-2">
+            <Text size="xsmall" weight="plus" className="text-ui-fg-muted">
+              Facts used by this rule
+            </Text>
+            <div className="space-y-2">
+              {rule.facts.map((fact: any, index: number) => (
+                <FactRow key={`${fact.field}-${index}`} fact={fact} />
+              ))}
+            </div>
+          </div>
+        )}
+        {rule.matched && (rule.effects ?? []).length > 0 && (
+          <div className="space-y-2 border-t border-ui-border-base pt-4">
+            <Text size="xsmall" weight="plus" className="text-ui-fg-muted">
+              Effects produced
+            </Text>
             <EffectSummary effects={rule.effects} />
           </div>
-        </div>
-      )}
-      <div>
-        <Button type="button" variant="transparent" size="small" onClick={() => setShowJson(c => !c)}>
-          <Brackets className="h-4 w-4" />
-          {showJson ? "Hide raw JSON" : "Show raw JSON"}
-        </Button>
+        )}
       </div>
-      {showJson && (
-        <CodeBlock
-          className="rounded-lg"
-          snippets={[
-            { label: "facts", language: "json", code: JSON.stringify(rule.facts, null, 2), hideLineNumbers: true },
-            { label: "effects", language: "json", code: JSON.stringify(rule.effects, null, 2), hideLineNumbers: true },
-          ]}
-        >
-          <CodeBlock.Header />
-          <CodeBlock.Body />
-        </CodeBlock>
-      )}
     </Container>
   );
 };
 
 const EvaluationDetail = ({ evaluation }: { evaluation: any }) => {
-  const [showRaw, setShowRaw] = useState(false);
   const input: Record<string, unknown> = evaluation.inputSnapshot ?? {};
   const result = evaluation.resultSnapshot ?? {};
   const allRules: any[] = result.ruleResults ?? [];
   const matched = allRules.filter(r => r.matched);
   const unmatched = allRules.filter(r => !r.matched);
+  const appliedPolicies = evaluation.appliedPolicyVersions ?? result.appliedPolicyVersions ?? [];
+  const snapshotFields = [
+    ...inputSnapshotFieldOrder,
+    ...Object.keys(input).filter(field => !inputSnapshotFieldOrder.includes(field)),
+  ];
 
   return (
     <div className="space-y-6">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Container className="bg-ui-bg-subtle p-4">
+          <Text size="xsmall" className="text-ui-fg-muted">System decision</Text>
+          <div className="mt-2"><DecisionBadge value={evaluation.decision} /></div>
+        </Container>
+        <Container className="bg-ui-bg-subtle p-4">
+          <Text size="xsmall" className="text-ui-fg-muted">Evaluated at</Text>
+          <Text size="small" weight="plus" className="mt-2">{formatDate(evaluation.evaluatedAt)}</Text>
+        </Container>
+        <Container className="bg-ui-bg-subtle p-4">
+          <Text size="xsmall" className="text-ui-fg-muted">Evaluated by</Text>
+          <Text size="small" weight="plus" className="mt-2">
+            {evaluation.evaluatedBy?.name ?? "Policy engine"}
+          </Text>
+        </Container>
+        <Container className="bg-ui-bg-subtle p-4">
+          <Text size="xsmall" className="text-ui-fg-muted">Risk points</Text>
+          <Text family="mono" weight="plus" className="mt-2">{result.riskPoints ?? 0}</Text>
+        </Container>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Container className="p-0">
+          <div className="border-b border-ui-border-base px-4 py-3">
+            <Text weight="plus">Decision reasons</Text>
+          </div>
+          <div className="space-y-2 p-4">
+            {(result.reasons ?? []).map((reason: string) => (
+              <div key={reason} className="flex gap-x-2">
+                <BellAlert className="mt-0.5 h-4 w-4 shrink-0 text-ui-fg-interactive" />
+                <Text size="small">{reason}</Text>
+              </div>
+            ))}
+          </div>
+        </Container>
+        <Container className="p-0">
+          <div className="border-b border-ui-border-base px-4 py-3">
+            <Text weight="plus">Required next steps</Text>
+          </div>
+          <div className="space-y-2 p-4">
+            {(result.nextSteps ?? []).map((step: string) => (
+              <div key={step} className="flex gap-x-2">
+                <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-ui-fg-interactive" />
+                <Text size="small">{step}</Text>
+              </div>
+            ))}
+          </div>
+        </Container>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Container className="p-4">
+          <Text weight="plus" size="small">Missing information</Text>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(result.missingFields ?? []).map((field: any) => (
+              <Badge key={field.field} color="orange" className={wrappingBadgeClassName}>
+                {field.label}
+              </Badge>
+            ))}
+            {(result.missingFields ?? []).length === 0 && <Badge color="green">Complete</Badge>}
+          </div>
+        </Container>
+        <Container className="p-4">
+          <Text weight="plus" size="small">Required approvers</Text>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(result.requiredApprovers ?? []).map((approver: string) => (
+              <Badge key={approver} color="blue" className={wrappingBadgeClassName}>
+                {approver}
+              </Badge>
+            ))}
+            {(result.requiredApprovers ?? []).length === 0 && <Badge color="grey">None</Badge>}
+          </div>
+        </Container>
+        <Container className="p-4">
+          <Text weight="plus" size="small">Reason codes</Text>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(result.reasonCodes ?? []).map((code: string) => (
+              <Badge key={code} color="purple" className={wrappingBadgeClassName}>
+                {code}
+              </Badge>
+            ))}
+            {(result.reasonCodes ?? []).length === 0 && <Badge color="grey">None</Badge>}
+          </div>
+        </Container>
+      </div>
+
+      <Container className="p-0">
+        <div className="border-b border-ui-border-base px-4 py-3">
+          <Text weight="plus">Policy versions used for this evaluation</Text>
+        </div>
+        <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
+          {appliedPolicies.map((policy: any) => (
+            <div key={policy.policyVersionId} className="rounded-lg border border-ui-border-base bg-ui-bg-subtle p-3">
+              <div className="flex items-start justify-between gap-2">
+                <Text size="small" weight="plus" className="break-words">{policy.policyName}</Text>
+                <Badge color="purple" size="2xsmall">v{policy.versionNumber}</Badge>
+              </div>
+              <Text size="xsmall" className="mt-1 text-ui-fg-muted">{policy.policyDomain}</Text>
+            </div>
+          ))}
+          {appliedPolicies.length === 0 && (
+            <Text size="small" className="text-ui-fg-subtle">No published policy version was applied.</Text>
+          )}
+        </div>
+      </Container>
+
       <div>
-        <Text weight="plus" className="mb-3">Request snapshot</Text>
+        <Text weight="plus" className="mb-3">Request snapshot at evaluation time</Text>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {inputSnapshotFieldOrder.map(field => {
+          {snapshotFields.map(field => {
             const val = input[field];
             if (val === undefined || val === null || val === "") return null;
             return (
               <div key={field} className="rounded-lg border border-ui-border-base bg-ui-bg-subtle px-3 py-2">
                 <Text size="xsmall" className="text-ui-fg-muted">
-                  {inputSnapshotFieldLabels[field]}
+                  {inputSnapshotFieldLabels[field] ?? field}
                 </Text>
                 <Text size="small" weight="plus" className="mt-0.5 break-words">
                   {formatConditionValue(val)}
@@ -989,13 +1100,11 @@ const EvaluationDetail = ({ evaluation }: { evaluation: any }) => {
       </div>
 
       <div>
-        <Text weight="plus" className="mb-3">
-          Rule results{" "}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Text weight="plus">Rules evaluated</Text>
           <Badge size="2xsmall" color="green">{matched.length} matched</Badge>
-          {unmatched.length > 0 && (
-            <Badge size="2xsmall" color="grey" className="ml-1">{unmatched.length} not matched</Badge>
-          )}
-        </Text>
+          <Badge size="2xsmall" color="grey">{unmatched.length} not matched</Badge>
+        </div>
         <div className="space-y-3">
           {matched.map((rule: any, i: number) => <RuleResultCard key={i} rule={rule} />)}
           {unmatched.map((rule: any, i: number) => <RuleResultCard key={`u-${i}`} rule={rule} />)}
@@ -1004,27 +1113,89 @@ const EvaluationDetail = ({ evaluation }: { evaluation: any }) => {
           )}
         </div>
       </div>
-
-      <div>
-        <Button type="button" variant="transparent" size="small" onClick={() => setShowRaw(c => !c)}>
-          <Brackets className="h-4 w-4" />
-          {showRaw ? "Hide raw JSON" : "Show raw JSON"}
-        </Button>
-      </div>
-      {showRaw && (
-        <CodeBlock
-          className="rounded-lg"
-          snippets={[
-            { label: "inputSnapshot", language: "json", code: JSON.stringify(input, null, 2), hideLineNumbers: true },
-            { label: "resultSnapshot", language: "json", code: JSON.stringify(result, null, 2), hideLineNumbers: true },
-          ]}
-        >
-          <CodeBlock.Header />
-          <CodeBlock.Body />
-        </CodeBlock>
-      )}
     </div>
   );
+};
+
+const isExceptionDecision = (decision: any) =>
+  Boolean(
+    decision?.isException ??
+      (decision?.newDecision === "APPROVED" && decision?.approverId !== decision?.createdById),
+  );
+
+const csvCell = (value: unknown) => {
+  const text = value === undefined || value === null ? "" : String(value);
+  return `"${text.replace(/"/g, "\"\"")}"`;
+};
+
+const exportEvaluationCsv = (request: any, evaluation: any) => {
+  if (!request || !evaluation || typeof window === "undefined") return;
+
+  const result = evaluation.resultSnapshot ?? {};
+  const input = evaluation.inputSnapshot ?? {};
+  const rows: Array<Array<unknown>> = [["Section", "Field", "Value", "Details"]];
+  const addRow = (section: string, field: string, value: unknown, details = "") =>
+    rows.push([section, field, formatConditionValue(value), details]);
+
+  addRow("Request", "Request ID", request.id);
+  addRow("Request", "Title", request.title);
+  addRow("Request", "Requester", request.requester?.name ?? request.requesterId);
+  addRow("Request", "Vendor", request.vendorName);
+  addRow("Evaluation", "Evaluation ID", evaluation.id);
+  addRow("Evaluation", "System decision", evaluation.decision);
+  addRow("Evaluation", "Evaluated at", evaluation.evaluatedAt);
+  addRow("Evaluation", "Evaluated by", evaluation.evaluatedBy?.name ?? "Policy engine");
+
+  Object.entries(input).forEach(([field, value]) => {
+    addRow("Input snapshot", inputSnapshotFieldLabels[field] ?? field, value);
+  });
+
+  (evaluation.appliedPolicyVersions ?? result.appliedPolicyVersions ?? []).forEach((policy: any) => {
+    addRow(
+      "Policy version",
+      policy.policyName,
+      `v${policy.versionNumber}`,
+      `${policy.policyDomain} | ${policy.policyVersionId}`,
+    );
+  });
+
+  (result.ruleResults ?? []).forEach((rule: any) => {
+    addRow(
+      "Rule",
+      rule.ruleName,
+      rule.matched ? "Matched" : "No match",
+      `${rule.policyName} v${rule.policyVersionNumber} | ${rule.reason}`,
+    );
+    (rule.facts ?? []).forEach((fact: any) => {
+      addRow(
+        "Rule fact",
+        fieldLabels[fact.field] ?? fact.field,
+        fact.actual,
+        `${operatorLabels[fact.operator] ?? fact.operator} ${formatConditionValue(fact.expected)} | ${fact.matched ? "matched" : "not matched"}`,
+      );
+    });
+    (rule.matched ? rule.effects ?? [] : []).forEach((effect: any) => {
+      addRow("Rule effect", effectTypeLabels[effect.type] ?? effect.type, describeEffect(effect));
+    });
+  });
+
+  (request.manualOverrides ?? []).forEach((decision: any) => {
+    addRow(
+      isExceptionDecision(decision) ? "Manual override" : "Reviewer decision",
+      decision.createdAt,
+      decision.newDecision,
+      `${decision.createdBy?.name ?? decision.createdById} | ${decision.reason} | ${decision.comment}`,
+    );
+  });
+
+  const csv = `\uFEFF${rows.map(row => row.map(csvCell).join(",")).join("\r\n")}`;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `audit-${request.id}-${evaluation.id}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
 };
 
 const PolicyDetailDrawer = ({
@@ -1107,6 +1278,53 @@ const SectionHeader = ({
     {action && <div className="flex flex-wrap gap-2">{action}</div>}
   </div>
 );
+
+const PaginationBar = ({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) => {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const firstItem = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastItem = Math.min(page * pageSize, total);
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-ui-border-base px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <Text size="xsmall" className="text-ui-fg-muted">
+        {firstItem}-{lastItem} of {total}
+      </Text>
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          size="small"
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}
+        >
+          Previous
+        </Button>
+        <Text size="xsmall" family="mono">
+          {page} / {totalPages}
+        </Text>
+        <Button
+          type="button"
+          variant="secondary"
+          size="small"
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+};
 
 const RequestSummary = ({ request, compact = false }: { request: any; compact?: boolean }) => {
   const latest = request?.latestEvaluation ?? request?.evaluations?.[0];
@@ -1263,11 +1481,20 @@ const Home: NextPage = () => {
   const [formRequestId, setFormRequestId] = useState("");
   const [requesterStatusFilter, setRequesterStatusFilter] = useState("__ALL__");
   const [requesterSort, setRequesterSort] = useState<"newest" | "oldest">("newest");
-  const [filters, setFilters] = useState({ search: "__ALL__", status: "__ALL__", decision: "__ALL__", category: "__ALL__" });
+  const [requestPage, setRequestPage] = useState(1);
+  const [reviewerSearch, setReviewerSearch] = useState("");
+  const [auditFilters, setAuditFilters] = useState({
+    search: "",
+    status: "__ALL__",
+    decision: "__ALL__",
+    category: "__ALL__",
+  });
+  const [selectedAuditEvaluationId, setSelectedAuditEvaluationId] = useState("");
   const [commentBody, setCommentBody] = useState("");
   const [commentVisibility, setCommentVisibility] = useState("PUBLIC");
   const [attachmentType, setAttachmentType] = useState("DPA");
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+  const [decisionAttachmentFile, setDecisionAttachmentFile] = useState<File | null>(null);
   const [decisionForm, setDecisionForm] = useState<{
     intent: ReviewIntentId;
     reason: string;
@@ -1310,46 +1537,62 @@ const Home: NextPage = () => {
   const [errorMessage, setErrorMessage] = useState("");
 
   const listQuery = useMemo(() => {
-    const params = new URLSearchParams({ page: "1", pageSize: "20" });
-    Object.entries(filters).forEach(([key, value]) => {
-      if (value && value !== "__ALL__") params.set(key, value);
+    if (!["requester", "reviewer", "audit"].includes(activeScreen)) return null;
+    const params = new URLSearchParams({
+      page: String(requestPage),
+      pageSize: "20",
+      actorId,
     });
     if (activeScreen === "requester") {
       params.set("requesterId", actorId);
+      params.set("sort", requesterSort);
       if (requesterStatusFilter !== "__ALL__") params.set("status", requesterStatusFilter);
     }
     if (activeScreen === "reviewer") {
       params.set("status", "IN_REVIEW");
       params.set("decision", "REQUIRES_REVIEW");
+      if (reviewerSearch.trim()) params.set("search", reviewerSearch.trim());
+    }
+    if (activeScreen === "audit") {
+      Object.entries(auditFilters).forEach(([key, value]) => {
+        if (value && value !== "__ALL__") params.set(key, value);
+      });
     }
     return `/api/requests?${params.toString()}`;
-  }, [activeScreen, actorId, filters, requesterStatusFilter]);
+  }, [
+    activeScreen,
+    actorId,
+    auditFilters,
+    requestPage,
+    requesterSort,
+    requesterStatusFilter,
+    reviewerSearch,
+  ]);
 
   const { data: bootstrap } = useSWR("/api/bootstrap", fetcher);
   const { data: dashboard } = useSWR("/api/dashboard", fetcher);
   const { data: requestList } = useSWR(listQuery, fetcher);
   const { data: policiesData } = useSWR("/api/policies", fetcher);
-  const { data: selectedRequestData } = useSWR(selectedRequestId ? `/api/requests/${selectedRequestId}` : null, fetcher);
+  const selectedRequestQuery =
+    selectedRequestId && listQuery
+      ? `/api/requests/${selectedRequestId}?actorId=${encodeURIComponent(actorId)}`
+      : null;
+  const { data: selectedRequestData } = useSWR(selectedRequestQuery, fetcher);
 
   const users = bootstrap?.users ?? [];
   const dictionaries = bootstrap?.dictionaries ?? {};
   const requests = requestList?.requests ?? [];
-  const sortedRequesterRequests = useMemo(() => {
-    const copy = [...requests];
-    copy.sort((left: any, right: any) => {
-      const leftTime = new Date(left.createdAt).getTime();
-      const rightTime = new Date(right.createdAt).getTime();
-      return requesterSort === "oldest" ? leftTime - rightTime : rightTime - leftTime;
-    });
-    return copy;
-  }, [requests, requesterSort]);
   const policies = policiesData?.policies ?? [];
   const selectedRequest = selectedRequestData?.request;
   const selectedActor = users.find((user: any) => user.id === actorId);
   const actorRoles = selectedActor?.roleAssignments?.map((item: any) => item.role.code) ?? ["REQUESTER"];
   const availableScreens = screenCatalog.filter(screen => screen.roles.some(role => actorRoles.includes(role)));
-  const selectedEvaluation = selectedRequest?.latestEvaluation ?? selectedRequest?.evaluations?.[0];
-  const selectedResult = selectedEvaluation?.resultSnapshot;
+  const latestEvaluation = selectedRequest?.latestEvaluation ?? selectedRequest?.evaluations?.[0];
+  const selectedResult = latestEvaluation?.resultSnapshot;
+  const selectedAuditEvaluation =
+    selectedRequest?.evaluations?.find(
+      (evaluation: any) => evaluation.id === selectedAuditEvaluationId,
+    ) ?? selectedRequest?.evaluations?.[0];
   const versions = useMemo(
     () =>
       policies.flatMap((policy: any) =>
@@ -1413,6 +1656,24 @@ const Home: NextPage = () => {
       setSelectedRequestId(requests[0]?.id ?? "");
     }
   }, [requests, selectedRequestId]);
+
+  useEffect(() => {
+    setRequestPage(1);
+  }, [
+    activeScreen,
+    actorId,
+    auditFilters,
+    requesterSort,
+    requesterStatusFilter,
+    reviewerSearch,
+  ]);
+
+  useEffect(() => {
+    const evaluations = selectedRequest?.evaluations ?? [];
+    if (!evaluations.some((evaluation: any) => evaluation.id === selectedAuditEvaluationId)) {
+      setSelectedAuditEvaluationId(evaluations[0]?.id ?? "");
+    }
+  }, [selectedAuditEvaluationId, selectedRequest]);
 
   useEffect(() => {
     if (!availableScreens.some(screen => screen.id === activeScreen)) {
@@ -1487,7 +1748,7 @@ const Home: NextPage = () => {
       mutate("/api/dashboard"),
       mutate("/api/policies"),
       mutate(listQuery),
-      selectedRequestId ? mutate(`/api/requests/${selectedRequestId}`) : Promise.resolve(),
+      selectedRequestQuery ? mutate(selectedRequestQuery) : Promise.resolve(),
     ]);
   };
 
@@ -1596,33 +1857,40 @@ const Home: NextPage = () => {
     }, "Comment added");
   };
 
+  const uploadRequestAttachment = async (file: File, type: string) => {
+    if (!selectedRequestId) throw new Error("Select a request before uploading a file.");
+    const mimeType = file.type || "application/octet-stream";
+    const { uploadUrl, storageKey } = await postJson("/api/upload/presign", {
+      fileName: file.name,
+      mimeType,
+      requestId: selectedRequestId,
+      actorId,
+    });
+
+    const uploadRes = await fetch(uploadUrl, {
+      method: "PUT",
+      body: file,
+      headers: { "Content-Type": mimeType },
+    });
+    if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.statusText}`);
+
+    await postJson(`/api/requests/${selectedRequestId}/attachments`, {
+      uploadedById: actorId,
+      attachmentType: type,
+      fileName: file.name,
+      mimeType,
+      sizeBytes: file.size,
+      storageKey,
+    });
+
+    return file.name;
+  };
+
   const addAttachment = (event: FormEvent) => {
     event.preventDefault();
     if (!selectedRequestId || !attachmentFile) return;
     return runAction(async () => {
-      const mimeType = attachmentFile.type || "application/octet-stream";
-
-      const { uploadUrl, storageKey } = await postJson("/api/upload/presign", {
-        fileName: attachmentFile.name,
-        mimeType,
-        requestId: selectedRequestId,
-      });
-
-      const uploadRes = await fetch(uploadUrl, {
-        method: "PUT",
-        body: attachmentFile,
-        headers: { "Content-Type": mimeType },
-      });
-      if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.statusText}`);
-
-      await postJson(`/api/requests/${selectedRequestId}/attachments`, {
-        uploadedById: actorId,
-        attachmentType,
-        fileName: attachmentFile.name,
-        mimeType,
-        sizeBytes: attachmentFile.size,
-        storageKey,
-      });
+      await uploadRequestAttachment(attachmentFile, attachmentType);
       setAttachmentFile(null);
     }, "Attachment uploaded");
   };
@@ -1640,6 +1908,9 @@ const Home: NextPage = () => {
     if (!selectedRequestId) return;
     const intent = reviewIntents[decisionForm.intent];
     return runAction(async () => {
+      const attachmentName = decisionAttachmentFile
+        ? await uploadRequestAttachment(decisionAttachmentFile, "APPROVAL_MAIL")
+        : undefined;
       await postJson(`/api/requests/${selectedRequestId}/overrides`, {
         createdById: actorId,
         // A plain reviewer decision is attributed to the reviewer; an exception needs a dedicated
@@ -1649,7 +1920,9 @@ const Home: NextPage = () => {
         exception: intent.exception,
         reason: decisionForm.reason,
         comment: decisionForm.comment,
+        attachmentName,
       });
+      setDecisionAttachmentFile(null);
     }, `${intent.label} recorded`);
   };
 
@@ -1842,7 +2115,21 @@ const Home: NextPage = () => {
     }, "Rule test completed");
 
   const updateFormField = (field: string, value: unknown) =>
-    setRequestForm((current: any) => ({ ...current, [field]: value }));
+    setRequestForm((current: any) => {
+      const next = { ...current, [field]: value };
+      if (field === "processesPersonalData" && value === false) {
+        next.dataCategories = "";
+        next.dataClassification = "NONE";
+        next.hasDpa = false;
+        next.transfersOutsideEea = false;
+        next.requiresSecurityQuestionnaire = false;
+        next.dpaDocument = "";
+      }
+      if (field === "urgency" && value !== "EMERGENCY") {
+        next.emergencyJustification = "";
+      }
+      return next;
+    });
 
   return (
     <div className="min-h-screen bg-ui-bg-subtle text-ui-fg-base">
@@ -2184,7 +2471,13 @@ const Home: NextPage = () => {
                       ]}
                     />
                   </div>
-                  <RequestTable requests={sortedRequesterRequests} selectedRequestId={selectedRequestId} onSelect={selectRequesterRow} />
+                  <RequestTable requests={requests} selectedRequestId={selectedRequestId} onSelect={selectRequesterRow} />
+                  <PaginationBar
+                    page={requestList?.page ?? 1}
+                    pageSize={requestList?.pageSize ?? 20}
+                    total={requestList?.total ?? 0}
+                    onPageChange={setRequestPage}
+                  />
                 </Container>
 
                 <Container className="p-6">
@@ -2265,22 +2558,63 @@ const Home: NextPage = () => {
                         </InlineTip>
                       )}
 
-                      {selectedResult?.missingFields?.length > 0 && (
-                        <form className="rounded-lg border border-ui-border-base bg-ui-bg-subtle p-4" onSubmit={addAttachment}>
-                          <Text weight="plus" size="small">Upload supporting document</Text>
-                          <Text size="xsmall" className="mt-1 text-ui-fg-muted">
-                            Dodanie dokumentu (np. DPA) automatycznie ponownie oceni wniosek.
-                          </Text>
-                          <div className="mt-3 grid gap-3">
-                            <SelectField label="Document type" value={attachmentType} onValueChange={setAttachmentType} options={options(["DPA", "CONTRACT", "OFFER", "APPROVAL_MAIL", "SECURITY_QUESTIONNAIRE", "VENDOR_ASSESSMENT", "OTHER"])} />
-                            <Input type="file" onChange={event => setAttachmentFile(event.target.files?.[0] ?? null)} />
-                            <Button type="submit" variant="secondary">
-                              <PaperClip className="h-4 w-4" />
-                              Upload file
-                            </Button>
-                          </div>
-                        </form>
-                      )}
+                      <form className="rounded-lg border border-ui-border-base bg-ui-bg-subtle p-4" onSubmit={addAttachment}>
+                        <Text weight="plus" size="small">Supporting documents</Text>
+                        <Text size="xsmall" className="mt-1 text-ui-fg-muted">
+                          {selectedRequest.status === "NEEDS_INFORMATION"
+                            ? "Dodaj DPA, umowę, ofertę lub inny dokument. DPA uruchomi ponowną ocenę tego wniosku."
+                            : "Dodaj DPA, umowę, ofertę lub inny dokument do historii wniosku."}
+                        </Text>
+                        <div className="mt-3 space-y-2">
+                          {(selectedRequest.attachments ?? []).map((attachment: any) => (
+                            <div
+                              key={attachment.id}
+                              className="flex flex-col gap-2 rounded-md border border-ui-border-base bg-ui-bg-base px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                            >
+                              <div className="min-w-0">
+                                <Text size="small" weight="plus" className="break-words">
+                                  {attachment.fileName}
+                                </Text>
+                                <Text size="xsmall" className="text-ui-fg-muted">
+                                  {attachment.attachmentType} · {formatDate(attachment.createdAt)}
+                                </Text>
+                              </div>
+                              {attachment.storageKey && !attachment.storageKey.startsWith("metadata:") && (
+                                <Button
+                                  type="button"
+                                  variant="transparent"
+                                  size="small"
+                                  onClick={async () => {
+                                    try {
+                                      const data = await fetcher(
+                                        `/api/upload/download-url?key=${encodeURIComponent(attachment.storageKey)}&actorId=${encodeURIComponent(actorId)}`,
+                                      );
+                                      window.open(data.downloadUrl, "_blank");
+                                    } catch {
+                                      toast.error("Could not generate download link");
+                                    }
+                                  }}
+                                >
+                                  Download
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+                          {(selectedRequest.attachments ?? []).length === 0 && (
+                            <Text size="small" className="text-ui-fg-subtle">
+                              No supporting documents uploaded yet.
+                            </Text>
+                          )}
+                        </div>
+                        <div className="mt-4 grid gap-3">
+                          <SelectField label="Document type" value={attachmentType} onValueChange={setAttachmentType} options={options(["DPA", "CONTRACT", "OFFER", "APPROVAL_MAIL", "SECURITY_QUESTIONNAIRE", "VENDOR_ASSESSMENT", "OTHER"])} />
+                          <Input type="file" onChange={event => setAttachmentFile(event.target.files?.[0] ?? null)} />
+                          <Button type="submit" variant="secondary" disabled={!attachmentFile}>
+                            <PaperClip className="h-4 w-4" />
+                            Upload file
+                          </Button>
+                        </div>
+                      </form>
 
                       <div className="rounded-lg border border-ui-border-base bg-ui-bg-subtle p-4">
                         <Text weight="plus" size="small">Discussion</Text>
@@ -2317,12 +2651,18 @@ const Home: NextPage = () => {
               <Container className="p-0">
                 <SectionHeader title="Review queue" description="Reviewer pracuje na sprawach wymagających człowieka." />
                 <div className="grid gap-3 border-b border-ui-border-base p-4">
-                  <TextField label="Search" value={filters.search === "__ALL__" ? "" : filters.search} onChange={value => setFilters(current => ({ ...current, search: value || "__ALL__" }))} placeholder="Vendor or title" />
+                  <TextField label="Search" value={reviewerSearch} onChange={setReviewerSearch} placeholder="Vendor or title" />
                   <Text size="xsmall" className="text-ui-fg-muted">
                     Kolejka pokazuje wyłącznie wnioski ze statusem IN_REVIEW i decyzją REQUIRES_REVIEW.
                   </Text>
                 </div>
                 <RequestTable requests={requests} selectedRequestId={selectedRequestId} onSelect={setSelectedRequestId} compact />
+                <PaginationBar
+                  page={requestList?.page ?? 1}
+                  pageSize={requestList?.pageSize ?? 20}
+                  total={requestList?.total ?? 0}
+                  onPageChange={setRequestPage}
+                />
               </Container>
 
               <Container className="p-0">
@@ -2421,6 +2761,16 @@ const Home: NextPage = () => {
                             )}
                             <TextField label="Reason" value={decisionForm.reason} onChange={value => setDecisionForm(current => ({ ...current, reason: value }))} />
                             <TextareaField label="Comment" value={decisionForm.comment} onChange={value => setDecisionForm(current => ({ ...current, comment: value }))} />
+                            <div className="space-y-1.5">
+                              <Label size="small" weight="plus">Decision evidence (optional)</Label>
+                              <Input
+                                type="file"
+                                onChange={event => setDecisionAttachmentFile(event.target.files?.[0] ?? null)}
+                              />
+                              <Text size="xsmall" className="text-ui-fg-muted">
+                                The file is stored with the request and referenced by the human decision.
+                              </Text>
+                            </div>
                             <Button
                               type="submit"
                               variant={
@@ -2464,7 +2814,7 @@ const Home: NextPage = () => {
                           </Button>
                         </form>
                       </div>
-                      <ActivityLists request={selectedRequest} />
+                      <ActivityLists request={selectedRequest} actorId={actorId} />
                     </Tabs.Content>
                   </Tabs>
                 </div>
@@ -3241,66 +3591,204 @@ const Home: NextPage = () => {
           )}
 
           {activeScreen === "audit" && (
-            <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <div className="grid gap-4 2xl:grid-cols-[360px_minmax(0,1fr)]">
               <Container className="p-0">
-                <SectionHeader title="Audit index" description="Auditor wybiera historyczny wniosek, nie edytuje go." />
+                <SectionHeader title="Audit index" description="Wyszukaj wniosek i odtwórz dowolną historyczną ocenę." />
+                <div className="grid gap-3 border-b border-ui-border-base p-4 sm:grid-cols-2 2xl:grid-cols-1">
+                  <div className="sm:col-span-2 2xl:col-span-1">
+                    <TextField
+                      label="Search"
+                      value={auditFilters.search}
+                      onChange={value => setAuditFilters(current => ({ ...current, search: value }))}
+                      placeholder="Request title or vendor"
+                    />
+                  </div>
+                  <SelectField
+                    label="Status"
+                    value={auditFilters.status}
+                    onValueChange={value => setAuditFilters(current => ({ ...current, status: value }))}
+                    options={[
+                      { value: "__ALL__", label: "All statuses" },
+                      ...Object.keys(statusLabels).map(status => ({
+                        value: status,
+                        label: statusLabels[status],
+                      })),
+                    ]}
+                  />
+                  <SelectField
+                    label="System decision"
+                    value={auditFilters.decision}
+                    onValueChange={value => setAuditFilters(current => ({ ...current, decision: value }))}
+                    options={[
+                      { value: "__ALL__", label: "All decisions" },
+                      ...Object.keys(decisionLabels).map(decision => ({
+                        value: decision,
+                        label: decisionLabels[decision],
+                      })),
+                    ]}
+                  />
+                  <div className="sm:col-span-2 2xl:col-span-1">
+                    <SelectField
+                      label="Category"
+                      value={auditFilters.category}
+                      onValueChange={value => setAuditFilters(current => ({ ...current, category: value }))}
+                      options={[
+                        { value: "__ALL__", label: "All categories" },
+                        ...options(dictionaries.categories),
+                      ]}
+                    />
+                  </div>
+                </div>
                 <RequestTable requests={requests} selectedRequestId={selectedRequestId} onSelect={setSelectedRequestId} compact />
+                <PaginationBar
+                  page={requestList?.page ?? 1}
+                  pageSize={requestList?.pageSize ?? 20}
+                  total={requestList?.total ?? 0}
+                  onPageChange={setRequestPage}
+                />
               </Container>
               <Container className="p-0">
-                <SectionHeader title="Decision reconstruction" description="Snapshoty pozostają powiązane z wersją polityki z momentu oceny." />
+                <SectionHeader
+                  title="Decision reconstruction"
+                  description="Każdy widok korzysta z niemutowalnego snapshotu i wersji polityk z momentu oceny."
+                  action={
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={!selectedRequest || !selectedAuditEvaluation}
+                      onClick={() => exportEvaluationCsv(selectedRequest, selectedAuditEvaluation)}
+                    >
+                      <ArrowDownTray className="h-4 w-4" />
+                      Export evaluation CSV
+                    </Button>
+                  }
+                />
                 <div className="space-y-5 p-6">
-                  <RequestSummary request={selectedRequest} />
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <Container className="p-0">
-                      <div className="border-b border-ui-border-base px-4 py-3">
-                        <Text weight="plus">Evaluation history</Text>
-                      </div>
-                      <div className="divide-y divide-ui-border-base">
-                        {(selectedRequest?.evaluations ?? []).map((evaluation: any) => (
-                          <div key={evaluation.id} className="flex items-center justify-between gap-x-4 px-4 py-3">
-                            <div>
-                              <Text size="small" weight="plus">
-                                {formatDate(evaluation.evaluatedAt)}
-                              </Text>
-                              <Text size="xsmall" className="text-ui-fg-muted">
-                                {evaluation.ruleMatches?.length ?? 0} rule records
-                              </Text>
-                            </div>
-                            <DecisionBadge value={evaluation.decision} />
+                  {!selectedRequest ? (
+                    <EmptyState
+                      title="No request selected"
+                      body="Choose a request from the audit index to inspect its immutable evaluation history."
+                    />
+                  ) : (
+                    <>
+                      <div className="flex flex-col gap-3 rounded-lg border border-ui-border-base bg-ui-bg-subtle p-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Heading level="h2">{selectedRequest.title}</Heading>
+                            <StatusPill value={selectedRequest.status} />
                           </div>
-                        ))}
+                          <Text size="small" className="mt-1 text-ui-fg-subtle">
+                            {selectedRequest.vendorName} · {selectedRequest.annualCost} {selectedRequest.currency}
+                          </Text>
+                          <Text size="xsmall" className="mt-2 text-ui-fg-muted">
+                            Submitted by {selectedRequest.requester?.name ?? selectedRequest.requesterId} · Request ID {selectedRequest.id}
+                          </Text>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
+                          <Text size="xsmall" className="text-ui-fg-muted">Current effective outcome</Text>
+                          <DecisionBadge value={selectedRequest.effectiveDecision ?? selectedRequest.decision} />
+                        </div>
                       </div>
-                    </Container>
-                    <Container className="p-0">
-                      <div className="border-b border-ui-border-base px-4 py-3">
-                        <Text weight="plus">Manual overrides</Text>
-                      </div>
-                      <div className="divide-y divide-ui-border-base">
-                        {(selectedRequest?.manualOverrides ?? []).map((override: any) => (
-                          <div key={override.id} className="px-4 py-3">
-                            <div className="flex items-center justify-between">
-                              <DecisionBadge value={override.newDecision} />
-                              <Text size="xsmall" className="text-ui-fg-muted">
-                                {formatDate(override.createdAt)}
-                              </Text>
-                            </div>
-                            <Text size="small" className="mt-2">
-                              {override.reason}
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <Container className="p-0">
+                          <div className="border-b border-ui-border-base px-4 py-3">
+                            <Text weight="plus">Evaluation history</Text>
+                            <Text size="xsmall" className="mt-1 text-ui-fg-muted">
+                              Select one evaluation to reconstruct exactly what the engine saw.
                             </Text>
                           </div>
-                        ))}
-                        {(selectedRequest?.manualOverrides ?? []).length === 0 && (
-                          <div className="p-4">
-                            <Text size="small" className="text-ui-fg-subtle">
-                              No manual overrides recorded.
+                          <div className="divide-y divide-ui-border-base">
+                            {(selectedRequest.evaluations ?? []).map((evaluation: any) => {
+                              const selected = selectedAuditEvaluation?.id === evaluation.id;
+                              return (
+                                <button
+                                  type="button"
+                                  key={evaluation.id}
+                                  onClick={() => setSelectedAuditEvaluationId(evaluation.id)}
+                                  className={`flex w-full items-center justify-between gap-x-4 px-4 py-3 text-left transition-colors ${
+                                    selected ? "bg-ui-bg-highlight" : "hover:bg-ui-bg-subtle-hover"
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <Text size="small" weight="plus">
+                                      {formatDate(evaluation.evaluatedAt)}
+                                    </Text>
+                                    <Text size="xsmall" className="text-ui-fg-muted">
+                                      {evaluation.evaluatedBy?.name ?? "Policy engine"} · {evaluation.ruleMatches?.length ?? evaluation.resultSnapshot?.ruleResults?.length ?? 0} rules
+                                    </Text>
+                                  </div>
+                                  <DecisionBadge value={evaluation.decision} />
+                                </button>
+                              );
+                            })}
+                            {(selectedRequest.evaluations ?? []).length === 0 && (
+                              <div className="p-4">
+                                <Text size="small" className="text-ui-fg-subtle">
+                                  This request has not been evaluated yet.
+                                </Text>
+                              </div>
+                            )}
+                          </div>
+                        </Container>
+                        <Container className="p-0">
+                          <div className="border-b border-ui-border-base px-4 py-3">
+                            <Text weight="plus">Human decisions and exceptions</Text>
+                            <Text size="xsmall" className="mt-1 text-ui-fg-muted">
+                              The original system decision remains visible alongside every human action.
                             </Text>
                           </div>
-                        )}
+                          <div className="divide-y divide-ui-border-base">
+                            {(selectedRequest.manualOverrides ?? []).map((decision: any) => {
+                              const exception = isExceptionDecision(decision);
+                              return (
+                                <div key={decision.id} className="space-y-2 px-4 py-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge color={exception ? "orange" : "blue"} size="2xsmall">
+                                        {exception ? "Manual override" : "Reviewer decision"}
+                                      </Badge>
+                                      <DecisionBadge value={decision.newDecision} />
+                                    </div>
+                                    <Text size="xsmall" className="text-ui-fg-muted">
+                                      {formatDate(decision.createdAt)}
+                                    </Text>
+                                  </div>
+                                  <Text size="small" weight="plus">{decision.reason}</Text>
+                                  <Text size="small" className="text-ui-fg-subtle">{decision.comment}</Text>
+                                  <Text size="xsmall" className="text-ui-fg-muted">
+                                    Recorded by {decision.createdBy?.name ?? decision.createdById}
+                                    {exception ? ` · Exception approver: ${decision.approver?.name ?? decision.approverId}` : ""}
+                                  </Text>
+                                  {decision.attachmentName && (
+                                    <div className="flex items-center gap-1.5">
+                                      <PaperClip className="h-4 w-4 text-ui-fg-muted" />
+                                      <Text size="xsmall">{decision.attachmentName}</Text>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {(selectedRequest.manualOverrides ?? []).length === 0 && (
+                              <div className="p-4">
+                                <Text size="small" className="text-ui-fg-subtle">
+                                  No human decision or manual override has been recorded.
+                                </Text>
+                              </div>
+                            )}
+                          </div>
+                        </Container>
                       </div>
-                    </Container>
-                  </div>
-                  {selectedEvaluation && (
-                    <EvaluationDetail evaluation={selectedEvaluation} />
+
+                      {selectedAuditEvaluation ? (
+                        <EvaluationDetail evaluation={selectedAuditEvaluation} />
+                      ) : (
+                        <EmptyState
+                          title="No evaluation selected"
+                          body="Select an evaluation from the history to inspect its policy versions, facts and rule results."
+                        />
+                      )}
+                    </>
                   )}
                 </div>
               </Container>
@@ -3376,7 +3864,7 @@ const RequestTable = ({
   );
 };
 
-const ActivityLists = ({ request }: { request: any }) => (
+const ActivityLists = ({ request, actorId }: { request: any; actorId: string }) => (
   <div className="mt-6 grid gap-4 lg:grid-cols-2">
     <Container className="p-0">
       <div className="border-b border-ui-border-base px-4 py-3">
@@ -3423,7 +3911,7 @@ const ActivityLists = ({ request }: { request: any }) => (
                 size="small"
                 onClick={async () => {
                   try {
-                    const data = await fetcher(`/api/upload/download-url?key=${encodeURIComponent(attachment.storageKey)}`);
+                    const data = await fetcher(`/api/upload/download-url?key=${encodeURIComponent(attachment.storageKey)}&actorId=${encodeURIComponent(actorId)}`);
                     window.open(data.downloadUrl, "_blank");
                   } catch {
                     toast.error("Could not generate download link");

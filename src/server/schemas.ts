@@ -53,13 +53,39 @@ export const requestInputSchema = z.object({
   emergencyJustification: z.string().optional().default(""),
 });
 
-export const createRequestSchema = requestInputSchema.extend({
-  mode: z.enum(["draft", "submit"]).default("submit"),
-});
+const validateConditionalRequestFields = (
+  input: {
+    mode?: "draft" | "submit";
+    processesPersonalData?: boolean;
+    dataCategories?: string[];
+  },
+  context: z.RefinementCtx,
+) => {
+  if (
+    input.mode === "submit" &&
+    input.processesPersonalData &&
+    (!input.dataCategories || input.dataCategories.length === 0)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["dataCategories"],
+      message: "Select at least one data category when the vendor processes personal data.",
+    });
+  }
+};
 
-export const updateRequestSchema = requestInputSchema.partial().extend({
-  mode: z.enum(["draft", "submit"]).optional(),
-});
+export const createRequestSchema = requestInputSchema
+  .extend({
+    mode: z.enum(["draft", "submit"]).default("submit"),
+  })
+  .superRefine(validateConditionalRequestFields);
+
+export const updateRequestSchema = requestInputSchema
+  .partial()
+  .extend({
+    mode: z.enum(["draft", "submit"]).optional(),
+  })
+  .superRefine(validateConditionalRequestFields);
 
 export const commentSchema = z.object({
   authorId: z.string().min(1),
@@ -78,17 +104,27 @@ export const attachmentSchema = z.object({
   storageKey: z.string().optional(),
 });
 
-export const manualOverrideSchema = z.object({
-  createdById: z.string().min(1),
-  approverId: z.string().min(1),
-  newDecision: z.enum(["APPROVED", "REQUIRES_REVIEW", "REJECTED", "MISSING_INFORMATION"]),
-  // When true the approval is recorded as a documented exception (status APPROVED_WITH_EXCEPTION,
-  // UC-9). A plain reviewer decision (UC-3) leaves it false.
-  exception: z.coerce.boolean().optional().default(false),
-  reason: z.string().min(3),
-  comment: z.string().min(3),
-  attachmentName: z.string().optional(),
-});
+export const manualOverrideSchema = z
+  .object({
+    createdById: z.string().min(1),
+    approverId: z.string().min(1),
+    newDecision: z.enum(["APPROVED", "REQUIRES_REVIEW", "REJECTED", "MISSING_INFORMATION"]),
+    // A plain reviewer decision (UC-3) and an approved exception (UC-9) share the
+    // human-decision record, but only the latter is a manual override.
+    exception: z.coerce.boolean().optional().default(false),
+    reason: z.string().min(3),
+    comment: z.string().min(3),
+    attachmentName: z.string().optional(),
+  })
+  .superRefine((input, context) => {
+    if (input.exception && input.newDecision !== "APPROVED") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["newDecision"],
+        message: "An exception can only approve a request.",
+      });
+    }
+  });
 
 export const ruleCreateSchema = z.object({
   policyVersionId: z.string().min(1),

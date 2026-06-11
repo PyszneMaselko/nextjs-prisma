@@ -3,11 +3,18 @@ import {
   demoPolicyVersions,
   demoRequestInput,
   demoRoles,
+  demoSeedRequests,
   demoUsers,
 } from "../domain/policy/demoData";
 import { evaluatePolicyVersions } from "../domain/policy/ruleEngine";
 import { approverGroups, PolicyVersionDefinition, RequestInput } from "../domain/policy/types";
 import { requestStatusForDecision, statusForReviewerDecision } from "./policyService";
+import {
+  canListRequests,
+  canModifyRequestFiles,
+  canReadRequest,
+  hideInternalComments,
+} from "./requestAccess";
 
 type MemoryState = {
   roles: any[];
@@ -33,6 +40,9 @@ const actorRoleCodes = (state: MemoryState, actorId: string): string[] =>
   (userById(state, actorId)?.roleAssignments ?? [])
     .map((assignment: any) => assignment.role?.code)
     .filter(Boolean);
+
+export const memoryActorRoleCodes = (actorId: string) =>
+  actorRoleCodes(getMemoryState(), actorId);
 
 const toPolicyDefinitions = (state: MemoryState): PolicyVersionDefinition[] =>
   state.policies
@@ -108,6 +118,33 @@ const attachRelations = (state: MemoryState, request: any) => ({
   latestEvaluation: request.evaluations[0] ?? null,
   effectiveDecision: request.manualOverrides[0]?.newDecision ?? request.decision,
 });
+
+// Applies a seeded reviewer decision directly (bypasses the runtime role/status guards because the
+// seed already guarantees the request is IN_REVIEW and the actor is a reviewer).
+const applySeedOverride = (state: MemoryState, requestId: string, override: any) => {
+  const request = state.requests.find(item => item.id === requestId);
+  if (!request) return;
+  request.manualOverrides.unshift({
+    id: id("override"),
+    requestId,
+    originalDecision: request.decision,
+    isException: Boolean(override.exception),
+    newDecision: override.newDecision,
+    reason: override.reason,
+    comment: override.comment,
+    approverId: override.approverId,
+    createdById: override.createdById,
+    createdAt: request.updatedAt ?? now(),
+  });
+  request.status = statusForReviewerDecision(override.newDecision, override.exception);
+  request.updatedAt = now();
+  state.auditEvents.push({
+    action: override.exception ? "REQUEST_DECISION_OVERRIDDEN" : "REQUEST_REVIEW_DECIDED",
+    entityId: requestId,
+    actorId: override.createdById,
+    createdAt: now(),
+  });
+};
 
 const createInitialState = (): MemoryState => {
   const roles = demoRoles.map(role => ({ ...role, createdAt: now() }));
@@ -188,35 +225,55 @@ const createInitialState = (): MemoryState => {
     ],
   });
 
-  const requests = [
-    {
-      id: "request-demo-acme-analytics",
-      ...demoRequestInput,
-      annualCost: Number(demoRequestInput.annualCost),
-      dataCategories: demoRequestInput.dataCategories,
-      status: "SUBMITTED",
+  const daysAgoIso = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+
+  const requests = demoSeedRequests.map(seed => {
+    const createdAt = daysAgoIso(seed.daysAgo);
+    return {
+      id: seed.id,
+      ...seed.input,
+      annualCost: Number(seed.input.annualCost),
+      dataCategories: seed.input.dataCategories ?? [],
+      status: seed.mode === "draft" ? "DRAFT" : "SUBMITTED",
       decision: null,
-      createdAt: now(),
-      updatedAt: now(),
-      inputData: demoRequestInput,
-      comments: [
-        {
-          id: "comment-demo",
-          requestId: "request-demo-acme-analytics",
-          authorId: "user-requester",
-          visibility: "PUBLIC",
-          body: "Demo: zakup SaaS za 8 000 EUR bez DPA, zgodnie ze scenariuszem z dokumentu.",
-          createdAt: now(),
-        },
-      ],
-      attachments: [],
+      createdAt,
+      updatedAt: createdAt,
+      inputData: seed.input,
+      comments: (seed.comments ?? []).map((comment, index) => ({
+        id: `${seed.id}-comment-${index}`,
+        requestId: seed.id,
+        authorId: comment.authorId,
+        visibility: comment.visibility,
+        body: comment.body,
+        createdAt,
+      })),
+      attachments: (seed.attachments ?? []).map((attachment, index) => ({
+        id: `${seed.id}-attachment-${index}`,
+        requestId: seed.id,
+        uploadedById: attachment.uploadedById,
+        attachmentType: attachment.attachmentType,
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        storageKey: `metadata:${attachment.fileName}`,
+        createdAt,
+      })),
       manualOverrides: [],
       evaluations: [],
-    },
-  ];
+    };
+  });
 
   const state = { roles, users, policies, requests, auditEvents: [] };
-  evaluateMemoryRequest(state, requests[0].id, "user-requester");
+
+  // Evaluate every submitted request, then apply any seeded reviewer decision (exception / rejection).
+  demoSeedRequests.forEach(seed => {
+    if (seed.mode !== "submit") return;
+    evaluateMemoryRequest(state, seed.id, seed.input.requesterId);
+    if (seed.override) {
+      applySeedOverride(state, seed.id, seed.override);
+    }
+  });
+
   return state;
 };
 
@@ -339,6 +396,7 @@ export const memoryListRequests = (query: any) => {
   const page = Math.max(Number(query.page ?? 1), 1);
   const pageSize = Math.min(Math.max(Number(query.pageSize ?? 10), 1), 50);
   const search = String(query.search ?? "").toLocaleLowerCase();
+  const sortDirection = query.sort === "oldest" ? 1 : -1;
   const filtered = state.requests
     .filter(request => (!query.status || request.status === query.status))
     .filter(request => (!query.decision || request.decision === query.decision))
@@ -347,7 +405,7 @@ export const memoryListRequests = (query: any) => {
     .filter(request => (!query.urgency || request.urgency === query.urgency))
     .filter(request => (!query.requesterId || request.requesterId === query.requesterId))
     .filter(request => !search || request.title.toLocaleLowerCase().includes(search) || request.vendorName.toLocaleLowerCase().includes(search))
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    .sort((a, b) => sortDirection * String(a.createdAt).localeCompare(String(b.createdAt)));
   const requests = filtered
     .slice((page - 1) * pageSize, page * pageSize)
     .map(request => attachRelations(state, request));
@@ -361,8 +419,48 @@ export const memoryGetRequest = (requestId: string) => {
   return request ? attachRelations(state, request) : null;
 };
 
+export const memoryGetRequestForActor = (requestId: string, actorId: string) => {
+  const state = getMemoryState();
+  const request = state.requests.find(item => item.id === requestId);
+  if (!request) return null;
+
+  const roleCodes = actorRoleCodes(state, actorId);
+  if (!canReadRequest(roleCodes, actorId, request.requesterId)) {
+    return { error: "You do not have permission to view this request." };
+  }
+
+  return hideInternalComments(attachRelations(state, request), roleCodes);
+};
+
+export const memoryRequestFileAccess = (
+  requestId: string,
+  actorId: string,
+  mode: "read" | "write",
+) => {
+  const state = getMemoryState();
+  const request = state.requests.find(item => item.id === requestId);
+  if (!request) return "not-found" as const;
+
+  const roleCodes = actorRoleCodes(state, actorId);
+  const allowed =
+    mode === "write"
+      ? canModifyRequestFiles(roleCodes, actorId, request.requesterId)
+      : canReadRequest(roleCodes, actorId, request.requesterId);
+  return allowed ? ("allowed" as const) : ("forbidden" as const);
+};
+
+export const memoryAttachmentRequestId = (storageKey: string) => {
+  const request = getMemoryState().requests.find(item =>
+    item.attachments.some((attachment: any) => attachment.storageKey === storageKey),
+  );
+  return request?.id ?? null;
+};
+
 export const memoryCreateRequest = (input: any) => {
   const state = getMemoryState();
+  if (!actorRoleCodes(state, input.requesterId).some(role => ["REQUESTER", "ADMIN"].includes(role))) {
+    return { error: "Only a Requester or Admin can create a request." };
+  }
   const request = {
     id: id("request"),
     ...input,
@@ -379,13 +477,27 @@ export const memoryCreateRequest = (input: any) => {
     evaluations: [],
   };
   state.requests.unshift(request);
-  return input.mode === "submit" ? evaluateMemoryRequest(state, request.id, input.requesterId) : attachRelations(state, request);
+  const detail =
+    input.mode === "submit"
+      ? evaluateMemoryRequest(state, request.id, input.requesterId)
+      : attachRelations(state, request);
+  return hideInternalComments(detail, actorRoleCodes(state, input.requesterId));
 };
 
 export const memoryUpdateRequest = (requestId: string, input: any) => {
   const state = getMemoryState();
   const request = state.requests.find(item => item.id === requestId);
   if (!request) return null;
+  if (!input.requesterId) {
+    return { error: "requesterId is required to update a request." };
+  }
+  const roleCodes = actorRoleCodes(state, input.requesterId);
+  if (!roleCodes.some(role => ["REQUESTER", "ADMIN"].includes(role))) {
+    return { error: "Only a Requester or Admin can update a request." };
+  }
+  if (!roleCodes.includes("ADMIN") && request.requesterId !== input.requesterId) {
+    return { error: "Requesters can only update their own requests." };
+  }
   if (!["DRAFT", "NEEDS_INFORMATION"].includes(request.status)) {
     return { error: "Only DRAFT or NEEDS_INFORMATION requests can be edited." };
   }
@@ -400,41 +512,71 @@ export const memoryUpdateRequest = (requestId: string, input: any) => {
     inputData: { ...request.inputData, ...editableInput },
     updatedAt: now(),
   });
-  return input.mode === "submit"
-    ? evaluateMemoryRequest(state, request.id, request.requesterId)
-    : attachRelations(state, request);
+  const detail =
+    input.mode === "submit"
+      ? evaluateMemoryRequest(state, request.id, request.requesterId)
+      : attachRelations(state, request);
+  return hideInternalComments(detail, roleCodes);
 };
 
 export const memoryAddComment = (requestId: string, input: any) => {
   const state = getMemoryState();
   const request = state.requests.find(item => item.id === requestId);
   if (!request) return null;
+  const roleCodes = actorRoleCodes(state, input.authorId);
+  const canReview = roleCodes.some(role => ["REVIEWER", "ADMIN"].includes(role));
+  const ownsRequest = roleCodes.includes("REQUESTER") && request.requesterId === input.authorId;
+  if (!canReview && !ownsRequest) {
+    return { error: "You do not have permission to comment on this request." };
+  }
+  if (!canReview && input.visibility === "INTERNAL") {
+    return { error: "Internal comments are only available to Reviewers and Admins." };
+  }
   request.comments.unshift({ id: id("comment"), requestId, createdAt: now(), ...input });
-  return attachRelations(state, request);
+  return hideInternalComments(attachRelations(state, request), roleCodes);
 };
 
 export const memoryAddAttachment = (requestId: string, input: any) => {
   const state = getMemoryState();
   const request = state.requests.find(item => item.id === requestId);
   if (!request) return null;
+  const roleCodes = actorRoleCodes(state, input.uploadedById);
+  const canReview = roleCodes.some(role => ["REVIEWER", "ADMIN"].includes(role));
+  const ownsRequest = roleCodes.includes("REQUESTER") && request.requesterId === input.uploadedById;
+  if (!canReview && !ownsRequest) {
+    return { error: "You do not have permission to add attachments to this request." };
+  }
   const storageKey = input.storageKey ?? `metadata:${input.fileName}`;
   request.attachments.unshift({ id: id("attachment"), requestId, createdAt: now(), storageKey, ...input });
   if (input.attachmentType === "DPA") {
+    const shouldReevaluate = request.status === "NEEDS_INFORMATION";
     request.hasDpa = true;
     request.inputData = { ...request.inputData, hasDpa: true, dpaDocument: input.fileName };
-    return evaluateMemoryRequest(state, requestId, input.uploadedById);
+    if (shouldReevaluate) {
+      return hideInternalComments(
+        evaluateMemoryRequest(state, requestId, input.uploadedById),
+        roleCodes,
+      );
+    }
   }
-  return attachRelations(state, request);
+  return hideInternalComments(attachRelations(state, request), roleCodes);
 };
 
 export const memoryAddOverride = (requestId: string, input: any) => {
   const state = getMemoryState();
   const request = state.requests.find(item => item.id === requestId);
   if (!request) return null;
+  if (request.status !== "IN_REVIEW") {
+    return { error: "Reviewer decisions can only be recorded for requests in IN_REVIEW." };
+  }
+  if (!actorRoleCodes(state, input.createdById).some(role => ["REVIEWER", "ADMIN"].includes(role))) {
+    return { error: "Only a Reviewer or Admin can record a reviewer decision." };
+  }
   request.manualOverrides.unshift({
     id: id("override"),
     requestId,
     originalDecision: request.decision,
+    isException: Boolean(input.exception),
     createdAt: now(),
     ...input,
   });

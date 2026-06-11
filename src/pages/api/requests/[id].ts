@@ -1,14 +1,23 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "../../../lib/prisma";
 import { handleApiError, methodNotAllowed, parseRequestBody } from "../../../server/apiHelpers";
-import { isMemoryMode, memoryGetRequest, memoryUpdateRequest } from "../../../server/memoryStore";
+import {
+  isMemoryMode,
+  memoryGetRequestForActor,
+  memoryUpdateRequest,
+} from "../../../server/memoryStore";
 import {
   createAuditEvent,
   evaluateRequestAndPersist,
+  getActorRoleCodes,
   getRequestDetail,
 } from "../../../server/policyService";
 import { serializeRequest } from "../../../server/serializers";
 import { updateRequestSchema } from "../../../server/schemas";
+import {
+  canReadRequest,
+  hideInternalComments,
+} from "../../../server/requestAccess";
 
 const requestFields = [
   "title",
@@ -38,15 +47,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const id = req.query.id as string;
 
     if (req.method === "GET") {
+      const actorId = typeof req.query.actorId === "string" ? req.query.actorId : "";
+      if (!actorId) {
+        return res.status(400).json({ error: "actorId is required." });
+      }
+
       if (isMemoryMode()) {
-        const request = memoryGetRequest(id);
+        const request = memoryGetRequestForActor(id, actorId);
         if (!request) return res.status(404).json({ error: "Request not found" });
+        if ("error" in request) return res.status(403).json({ error: request.error });
         return res.status(200).json({ request });
       }
 
       const request = await getRequestDetail(id);
       if (!request) return res.status(404).json({ error: "Request not found" });
-      return res.status(200).json({ request: serializeRequest(request) });
+      const roleCodes = await getActorRoleCodes(actorId);
+      if (!canReadRequest(roleCodes, actorId, request.requesterId)) {
+        return res.status(403).json({ error: "You do not have permission to view this request." });
+      }
+      return res.status(200).json({
+        request: hideInternalComments(serializeRequest(request), roleCodes),
+      });
     }
 
     if (req.method === "PATCH") {
@@ -60,13 +81,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const current = await prisma.request.findUnique({ where: { id } });
       if (!current) return res.status(404).json({ error: "Request not found" });
+      const input = updateRequestSchema.parse(parseRequestBody(req));
+      if (!input.requesterId) {
+        return res.status(400).json({ error: "requesterId is required to update a request." });
+      }
+      const roleCodes = await getActorRoleCodes(input.requesterId);
+      if (!roleCodes.some(role => ["REQUESTER", "ADMIN"].includes(role))) {
+        return res.status(403).json({ error: "Only a Requester or Admin can update a request." });
+      }
+      if (!roleCodes.includes("ADMIN") && current.requesterId !== input.requesterId) {
+        return res.status(403).json({ error: "Requesters can only update their own requests." });
+      }
       if (!["DRAFT", "NEEDS_INFORMATION"].includes(current.status)) {
         return res.status(409).json({
           error: "Only DRAFT or NEEDS_INFORMATION requests can be edited.",
         });
       }
 
-      const input = updateRequestSchema.parse(parseRequestBody(req));
       const { requesterId: _ignoredRequesterId, ...inputWithoutRequester } = input;
       const data: any = {};
 
@@ -116,7 +147,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ? await evaluateRequestAndPersist(id, current.requesterId)
           : await getRequestDetail(id);
 
-      return res.status(200).json({ request: serializeRequest(detail) });
+      return res.status(200).json({
+        request: hideInternalComments(serializeRequest(detail), roleCodes),
+      });
     }
 
     return methodNotAllowed(res, ["GET", "PATCH"]);

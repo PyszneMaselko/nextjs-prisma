@@ -4,8 +4,10 @@ import {
   memoryCreateRequest,
   memoryCreateRule,
   memoryCreateVersion,
+  memoryAddComment,
   memoryAddOverride,
   memoryGetRequest,
+  memoryGetRequestForActor,
   memoryUpdateRequest,
   memoryListRequests,
   memoryPolicies,
@@ -20,6 +22,32 @@ describe("memory policy lifecycle", () => {
   beforeEach(() => {
     resetMemoryState();
   });
+
+  const createReviewRequest = () =>
+    memoryCreateRequest({
+      title: "Reviewable SaaS request",
+      description: "A complete request that requires a procurement review.",
+      type: "NEW_SOFTWARE",
+      category: "SAAS",
+      annualCost: 8000,
+      currency: "EUR",
+      vendorName: "Reviewable vendor",
+      vendorCountry: "PL",
+      department: "ENGINEERING",
+      urgency: "NORMAL",
+      justification: "Reviewer workflow test.",
+      processesPersonalData: false,
+      dataCategories: [],
+      dataClassification: "NONE",
+      hasDpa: false,
+      transfersOutsideEea: false,
+      requiresSecurityQuestionnaire: false,
+      vendorRisk: "LOW",
+      requesterId: "user-requester",
+      businessOwnerId: "user-business-owner",
+      budgetOwnerId: "user-budget-owner",
+      mode: "submit",
+    });
 
   it("keeps the published version active while a newer version is drafted and reviewed", () => {
     const created = memoryCreateVersion("policy-data-processing", {
@@ -94,11 +122,38 @@ describe("memory policy lifecycle", () => {
 
   it("filters requester lists to the selected requester", () => {
     const result = memoryListRequests({ requesterId: "user-requester", page: 1, pageSize: 20 });
-    expect(result.requests).toHaveLength(1);
-    expect(result.requests[0].requesterId).toBe("user-requester");
+    expect(result.requests.length).toBeGreaterThan(0);
+    expect(result.requests.every((request: any) => request.requesterId === "user-requester")).toBe(
+      true,
+    );
 
     const empty = memoryListRequests({ requesterId: "user-policy-owner", page: 1, pageSize: 20 });
     expect(empty.requests).toHaveLength(0);
+  });
+
+  it("hides internal comments from requesters and exposes them to reviewers and auditors", () => {
+    const request = createReviewRequest();
+    const commented = memoryAddComment(request.id, {
+      authorId: "user-reviewer",
+      visibility: "INTERNAL",
+      body: "Internal reviewer note.",
+    });
+
+    expect(commented).toMatchObject({
+      comments: [expect.objectContaining({ visibility: "INTERNAL" })],
+    });
+    expect(memoryGetRequestForActor(request.id, "user-requester")).toMatchObject({
+      comments: [],
+    });
+    expect(memoryGetRequestForActor(request.id, "user-reviewer")).toMatchObject({
+      comments: [expect.objectContaining({ body: "Internal reviewer note." })],
+    });
+    expect(memoryGetRequestForActor(request.id, "user-auditor")).toMatchObject({
+      comments: [expect.objectContaining({ body: "Internal reviewer note." })],
+    });
+    expect(memoryGetRequestForActor(request.id, "user-policy-owner")).toEqual({
+      error: "You do not have permission to view this request.",
+    });
   });
 
   it("always creates new policies as drafts", () => {
@@ -183,7 +238,8 @@ describe("memory policy lifecycle", () => {
   });
 
   it("maps manual override decisions to the same request statuses as the database path", () => {
-    memoryAddOverride("request-demo-acme-analytics", {
+    const request = createReviewRequest();
+    memoryAddOverride(request.id, {
       createdById: "user-reviewer",
       approverId: "user-policy-owner",
       newDecision: "REJECTED",
@@ -191,20 +247,25 @@ describe("memory policy lifecycle", () => {
       comment: "The documented exception criteria were not met.",
     });
 
-    expect(memoryGetRequest("request-demo-acme-analytics")?.status).toBe("REJECTED");
+    expect(memoryGetRequest(request.id)?.status).toBe("REJECTED");
   });
 
   it("treats a plain reviewer approval as APPROVED and an exception as APPROVED_WITH_EXCEPTION", () => {
-    memoryAddOverride("request-demo-acme-analytics", {
+    const plainRequest = createReviewRequest();
+    memoryAddOverride(plainRequest.id, {
       createdById: "user-reviewer",
       approverId: "user-reviewer",
       newDecision: "APPROVED",
       reason: "Reviewer accepts the request after manual review.",
       comment: "Policy requirements are satisfied.",
     });
-    expect(memoryGetRequest("request-demo-acme-analytics")?.status).toBe("APPROVED");
+    expect(memoryGetRequest(plainRequest.id)).toMatchObject({
+      status: "APPROVED",
+      manualOverrides: [expect.objectContaining({ isException: false })],
+    });
 
-    memoryAddOverride("request-demo-acme-analytics", {
+    const exceptionRequest = createReviewRequest();
+    memoryAddOverride(exceptionRequest.id, {
       createdById: "user-reviewer",
       approverId: "user-policy-owner",
       newDecision: "APPROVED",
@@ -212,12 +273,52 @@ describe("memory policy lifecycle", () => {
       reason: "Business exception approved despite the outstanding concern.",
       comment: "Residual risk accepted with a compensating control.",
     });
-    expect(memoryGetRequest("request-demo-acme-analytics")?.status).toBe("APPROVED_WITH_EXCEPTION");
+    expect(memoryGetRequest(exceptionRequest.id)).toMatchObject({
+      status: "APPROVED_WITH_EXCEPTION",
+      manualOverrides: [expect.objectContaining({ isException: true })],
+    });
   });
 
-  it("keeps ownership immutable and only edits draft or missing-information requests", () => {
-    const updated = memoryUpdateRequest("request-demo-acme-analytics", {
+  it("rejects reviewer decisions outside the review queue or from the wrong role", () => {
+    expect(
+      memoryAddOverride("request-demo-acme-analytics", {
+        createdById: "user-reviewer",
+        approverId: "user-reviewer",
+        newDecision: "APPROVED",
+        reason: "Invalid state.",
+        comment: "The request is not currently in review.",
+      }),
+    ).toEqual({
+      error: "Reviewer decisions can only be recorded for requests in IN_REVIEW.",
+    });
+
+    const request = createReviewRequest();
+    expect(
+      memoryAddOverride(request.id, {
+        createdById: "user-requester",
+        approverId: "user-requester",
+        newDecision: "APPROVED",
+        reason: "Invalid actor.",
+        comment: "A requester cannot decide a review.",
+      }),
+    ).toEqual({
+      error: "Only a Reviewer or Admin can record a reviewer decision.",
+    });
+  });
+
+  it("enforces ownership and only edits draft or missing-information requests", () => {
+    const forbidden = memoryUpdateRequest("request-demo-acme-analytics", {
       requesterId: "user-policy-owner",
+      title: "Updated missing-information request",
+      mode: "draft",
+    });
+
+    expect(forbidden).toEqual({
+      error: "Only a Requester or Admin can update a request.",
+    });
+
+    const updated = memoryUpdateRequest("request-demo-acme-analytics", {
+      requesterId: "user-requester",
       title: "Updated missing-information request",
       mode: "draft",
     });
@@ -253,7 +354,12 @@ describe("memory policy lifecycle", () => {
       mode: "submit",
     });
 
-    expect(memoryUpdateRequest(submitted.id, { title: "Forbidden edit" })).toEqual({
+    expect(
+      memoryUpdateRequest(submitted.id, {
+        requesterId: "user-requester",
+        title: "Forbidden edit",
+      }),
+    ).toEqual({
       error: "Only DRAFT or NEEDS_INFORMATION requests can be edited.",
     });
   });

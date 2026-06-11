@@ -4,6 +4,7 @@ import { handleApiError, methodNotAllowed, parseRequestBody } from "../../../../
 import { isMemoryMode, memoryAddOverride } from "../../../../server/memoryStore";
 import {
   createAuditEvent,
+  getActorRoleCodes,
   getRequestDetail,
   statusForReviewerDecision,
 } from "../../../../server/policyService";
@@ -22,6 +23,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (isMemoryMode()) {
       const request = memoryAddOverride(requestId, input);
       if (!request) return res.status(404).json({ error: "Request not found" });
+      if ("error" in request) return res.status(409).json({ error: request.error });
       return res.status(201).json({ request });
     }
 
@@ -30,12 +32,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!request) {
       return res.status(404).json({ error: "Request not found" });
     }
+    if (request.status !== "IN_REVIEW") {
+      return res.status(409).json({
+        error: "Reviewer decisions can only be recorded for requests in IN_REVIEW.",
+      });
+    }
+
+    const roleCodes = await getActorRoleCodes(input.createdById);
+    if (!roleCodes.some(role => ["REVIEWER", "ADMIN"].includes(role))) {
+      return res.status(403).json({
+        error: "Only a Reviewer or Admin can record a reviewer decision.",
+      });
+    }
 
     const override = await prisma.manualOverride.create({
       data: {
         requestId,
         originalDecision: request.decision,
         newDecision: input.newDecision,
+        isException: input.exception,
         reason: input.reason,
         comment: input.comment,
         approverId: input.approverId,
