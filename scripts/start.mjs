@@ -10,7 +10,9 @@ if (migration.status !== 0) {
   process.exit(migration.status ?? 1);
 }
 
-const port = process.env.PORT || "3100";
+const port =
+  process.env.PORT ||
+  (process.env.RAILWAY_ENVIRONMENT ? "3000" : "3100");
 const server = spawn(
   process.execPath,
   ["./node_modules/next/dist/bin/next", "start", "--port", port],
