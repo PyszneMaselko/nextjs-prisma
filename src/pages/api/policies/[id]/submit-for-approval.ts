@@ -32,12 +32,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(403).json({ error: "Only a Policy Owner can submit a version for approval." });
     }
 
-    const version = await prisma.policyVersion.findUnique({ where: { id: input.versionId } });
+    const [policyRecord, version, ruleCount] = await Promise.all([
+      prisma.policy.findUnique({ where: { id: policyId } }),
+      prisma.policyVersion.findUnique({ where: { id: input.versionId } }),
+      prisma.rule.count({ where: { policyVersionId: input.versionId } }),
+    ]);
+    if (!policyRecord) {
+      return res.status(404).json({ error: "Policy not found" });
+    }
     if (!version || version.policyId !== policyId) {
       return res.status(404).json({ error: "Policy version not found" });
     }
     if (version.status !== "DRAFT") {
       return res.status(400).json({ error: "Only DRAFT versions can be submitted for approval." });
+    }
+    if (ruleCount === 0) {
+      return res.status(400).json({
+        error: "Add and save at least one rule before submitting the version for approval.",
+      });
     }
 
     await prisma.$transaction([
@@ -47,7 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }),
       prisma.policy.update({
         where: { id: policyId },
-        data: { status: "IN_REVIEW" },
+        data: { status: policyRecord.currentVersionId ? "PUBLISHED" : "IN_REVIEW" },
       }),
     ]);
 
@@ -61,7 +73,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const policy = await prisma.policy.findUnique({
       where: { id: policyId },
-      include: { owner: true, versions: { include: { author: true, rules: true } } },
+      include: {
+        owner: true,
+        versions: { include: { author: true, approvedBy: true, rules: true } },
+      },
     });
 
     return res.status(200).json({ policy: serializePolicy(policy) });

@@ -33,7 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         fileName: input.fileName,
         mimeType: input.mimeType,
         sizeBytes: input.sizeBytes,
-        storageKey: `metadata:${input.fileName}`,
+        storageKey: input.storageKey ?? `metadata:${input.fileName}`,
       },
     });
 

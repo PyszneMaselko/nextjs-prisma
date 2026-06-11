@@ -33,7 +33,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(403).json({ error: "Only a Policy Approver can reject a version." });
     }
 
-    const version = await prisma.policyVersion.findUnique({ where: { id: input.versionId } });
+    const [policyRecord, version] = await Promise.all([
+      prisma.policy.findUnique({ where: { id: policyId } }),
+      prisma.policyVersion.findUnique({ where: { id: input.versionId } }),
+    ]);
+    if (!policyRecord) {
+      return res.status(404).json({ error: "Policy not found" });
+    }
     if (!version || version.policyId !== policyId) {
       return res.status(404).json({ error: "Policy version not found" });
     }
@@ -48,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }),
       prisma.policy.update({
         where: { id: policyId },
-        data: { status: "DRAFT" },
+        data: { status: policyRecord.currentVersionId ? "PUBLISHED" : "DRAFT" },
       }),
     ]);
 
@@ -62,7 +68,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const policy = await prisma.policy.findUnique({
       where: { id: policyId },
-      include: { owner: true, versions: { include: { author: true, rules: true } } },
+      include: {
+        owner: true,
+        versions: { include: { author: true, approvedBy: true, rules: true } },
+      },
     });
 
     return res.status(200).json({ policy: serializePolicy(policy) });

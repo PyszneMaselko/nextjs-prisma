@@ -37,6 +37,18 @@ export const demoRoles = [
     name: "Auditor",
     description: "Ma wgląd w historię i snapshoty decyzji.",
   },
+  {
+    id: "role-business-owner",
+    code: "BUSINESS_OWNER",
+    name: "Business Owner",
+    description: "Może pełnić rolę właściciela biznesowego wniosku.",
+  },
+  {
+    id: "role-budget-owner",
+    code: "BUDGET_OWNER",
+    name: "Budget Owner",
+    description: "Może pełnić rolę właściciela budżetu wniosku.",
+  },
 ] as const;
 
 export const demoUsers = [
@@ -44,7 +56,7 @@ export const demoUsers = [
     id: "user-requester",
     name: "Maja Requester",
     email: "maja.requester@example.com",
-    roles: ["REQUESTER"],
+    roles: ["REQUESTER", "BUSINESS_OWNER"],
   },
   {
     id: "user-reviewer",
@@ -74,13 +86,13 @@ export const demoUsers = [
     id: "user-business-owner",
     name: "Kasia Business Owner",
     email: "kasia.owner@example.com",
-    roles: ["REQUESTER"],
+    roles: ["REQUESTER", "BUSINESS_OWNER", "BUDGET_OWNER"],
   },
   {
     id: "user-budget-owner",
     name: "Filip Finance",
     email: "filip.finance@example.com",
-    roles: ["REVIEWER"],
+    roles: ["REVIEWER", "BUDGET_OWNER"],
   },
 ] as const;
 
@@ -270,7 +282,7 @@ export const demoPolicyVersions: PolicyVersionDefinition[] = [
 export const demoPendingApprovalVersion = {
   id: "version-procurement-v2-pending",
   policyId: "policy-procurement",
-  versionNumber: 2,
+  versionNumber: null,
   changeSummary: "Obniżenie progu oceny zakupów SaaS z 5 000 EUR do 3 000 EUR.",
   authorId: "user-policy-owner",
   rule: {

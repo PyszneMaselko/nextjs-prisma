@@ -29,7 +29,6 @@ const requestFields = [
   "transfersOutsideEea",
   "requiresSecurityQuestionnaire",
   "vendorRisk",
-  "requesterId",
   "businessOwnerId",
   "budgetOwnerId",
 ] as const;
@@ -55,13 +54,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const input = updateRequestSchema.parse(parseRequestBody(req));
         const request = memoryUpdateRequest(id, input);
         if (!request) return res.status(404).json({ error: "Request not found" });
+        if ("error" in request) return res.status(409).json({ error: request.error });
         return res.status(200).json({ request });
       }
 
       const current = await prisma.request.findUnique({ where: { id } });
       if (!current) return res.status(404).json({ error: "Request not found" });
+      if (!["DRAFT", "NEEDS_INFORMATION"].includes(current.status)) {
+        return res.status(409).json({
+          error: "Only DRAFT or NEEDS_INFORMATION requests can be edited.",
+        });
+      }
 
       const input = updateRequestSchema.parse(parseRequestBody(req));
+      const { requesterId: _ignoredRequesterId, ...inputWithoutRequester } = input;
       const data: any = {};
 
       requestFields.forEach(field => {
@@ -75,7 +81,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       if (input.mode === "draft") {
-        data.status = "DRAFT";
+        data.status = current.status === "NEEDS_INFORMATION" ? "NEEDS_INFORMATION" : "DRAFT";
       }
 
       if (input.mode === "submit") {
@@ -89,7 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       data.inputData = {
         ...currentInputData,
-        ...input,
+        ...inputWithoutRequester,
       };
 
       await prisma.request.update({
@@ -102,12 +108,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         "Request",
         id,
         { mode: input.mode ?? "update" },
-        input.requesterId,
+        current.requesterId,
       );
 
       const detail =
         input.mode === "submit"
-          ? await evaluateRequestAndPersist(id, input.requesterId)
+          ? await evaluateRequestAndPersist(id, current.requesterId)
           : await getRequestDetail(id);
 
       return res.status(200).json({ request: serializeRequest(detail) });

@@ -14,7 +14,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const input = ruleTestSchema.parse(parseRequestBody(req));
 
     if (isMemoryMode()) {
-      return res.status(200).json(memoryTestRules(input.input, input.draftRule));
+      return res.status(200).json(memoryTestRules(input.input, input.draftRule, input.policyVersionId));
     }
 
     const result = await evaluateDraftInput(
@@ -23,6 +23,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ...input.input,
       },
       input.draftRule as any,
+      input.policyVersionId,
     );
 
     return res.status(200).json({ result });

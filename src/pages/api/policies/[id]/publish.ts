@@ -32,15 +32,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(403).json({ error: "Only a Policy Approver can publish a policy version." });
     }
 
-    const targetVersion = await prisma.policyVersion.findUnique({ where: { id: input.versionId } });
+    const targetVersion = await prisma.policyVersion.findUnique({
+      where: { id: input.versionId },
+      include: { _count: { select: { rules: true } } },
+    });
     if (!targetVersion || targetVersion.policyId !== policyId) {
       return res.status(404).json({ error: "Policy version not found" });
     }
     if (targetVersion.status !== "IN_REVIEW") {
       return res.status(400).json({ error: "Only versions awaiting approval can be published. Submit the version for approval first." });
     }
+    if (targetVersion._count.rules === 0) {
+      return res.status(400).json({ error: "A policy version without rules cannot be published." });
+    }
 
     const now = new Date();
+    const latestPublishedVersion = await prisma.policyVersion.aggregate({
+      where: {
+        policyId,
+        versionNumber: { not: null },
+      },
+      _max: { versionNumber: true },
+    });
+    const nextVersionNumber = (latestPublishedVersion._max.versionNumber ?? 0) + 1;
 
     await prisma.$transaction([
       prisma.policyVersion.updateMany({
@@ -57,9 +71,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       prisma.policyVersion.update({
         where: { id: input.versionId },
         data: {
+          versionNumber: nextVersionNumber,
           status: "PUBLISHED",
           effectiveFrom: now,
           effectiveTo: null,
+          approvedById: input.actorId,
+          approvedAt: now,
         },
       }),
       prisma.policy.update({
@@ -75,13 +92,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       "POLICY_VERSION_PUBLISHED",
       "PolicyVersion",
       input.versionId,
-      { policyId },
+      { policyId, versionNumber: nextVersionNumber },
       input.actorId,
     );
 
     const policy = await prisma.policy.findUnique({
       where: { id: policyId },
-      include: { owner: true, versions: { include: { author: true, rules: true } } },
+      include: {
+        owner: true,
+        versions: { include: { author: true, approvedBy: true, rules: true } },
+      },
     });
 
     return res.status(200).json({ policy: serializePolicy(policy) });

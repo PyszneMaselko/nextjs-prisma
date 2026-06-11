@@ -17,6 +17,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (isMemoryMode()) {
       const result = memoryCreateRule(input);
       if (!result) return res.status(404).json({ error: "Policy version not found" });
+      if ("error" in result) return res.status(409).json({ error: result.error });
       return res.status(201).json(result);
     }
 
@@ -29,9 +30,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: "Policy version not found" });
     }
 
-    if (!["DRAFT", "IN_REVIEW"].includes(version.status)) {
+    if (version.status !== "DRAFT") {
       return res.status(409).json({
-        error: "Rules can only be added to DRAFT or IN_REVIEW policy versions.",
+        error: "Rules can only be added to DRAFT policy versions.",
       });
     }
 
@@ -59,7 +60,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const policy = await prisma.policy.findUnique({
       where: { id: version.policyId },
-      include: { owner: true, versions: { include: { author: true, rules: true } } },
+      include: {
+        owner: true,
+        versions: { include: { author: true, approvedBy: true, rules: true } },
+      },
     });
 
     return res.status(201).json({ policy: serializePolicy(policy), rule });

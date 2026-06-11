@@ -13,6 +13,7 @@ import {
 } from "../domain/policy/demoData";
 import { evaluatePolicyVersions } from "../domain/policy/ruleEngine";
 import { prisma } from "../lib/prisma";
+import { deleteStorageObjects } from "./minioClient";
 
 export const requestStatusForDecision = (decision: Decision) => {
   switch (decision) {
@@ -24,6 +25,23 @@ export const requestStatusForDecision = (decision: Decision) => {
       return "IN_REVIEW";
     case "REJECTED":
       return "REJECTED";
+  }
+};
+
+// A human reviewer decision (UC-3 / UC-9) follows the IN_REVIEW -> {APPROVED, REJECTED,
+// APPROVED_WITH_EXCEPTION} branch of the state machine. Unlike the automatic path, a manual
+// approval is a plain APPROVED unless it is explicitly recorded as an exception.
+export const statusForReviewerDecision = (decision: Decision, exception = false) => {
+  switch (decision) {
+    case "APPROVED":
+      return exception ? "APPROVED_WITH_EXCEPTION" : "APPROVED";
+    case "REJECTED":
+      return "REJECTED";
+    case "MISSING_INFORMATION":
+      return "NEEDS_INFORMATION";
+    case "REQUIRES_REVIEW":
+    default:
+      return "IN_REVIEW";
   }
 };
 
@@ -60,29 +78,35 @@ export const buildRequestInput = (request: any): RequestInput => {
   };
 };
 
-const toPolicyVersionDefinition = (version: any): PolicyVersionDefinition => ({
-  id: version.id,
-  policyId: version.policyId,
-  policyName: version.policy.name,
-  policyDomain: version.policy.domain,
-  versionNumber: version.versionNumber,
-  rules: version.rules.map((rule: any) => ({
-    id: rule.id,
-    name: rule.name,
-    description: rule.description,
-    severity: rule.severity,
-    condition: rule.condition,
-    effects: rule.effects,
-    reason: rule.reason,
-    enabled: rule.enabled,
-    priority: rule.priority,
+const toPolicyVersionDefinition = (version: any): PolicyVersionDefinition => {
+  if (typeof version.versionNumber !== "number") {
+    throw new Error("A policy version must have a publication number before evaluation.");
+  }
+
+  return {
+    id: version.id,
     policyId: version.policyId,
     policyName: version.policy.name,
     policyDomain: version.policy.domain,
-    policyVersionId: version.id,
-    policyVersionNumber: version.versionNumber,
-  })),
-});
+    versionNumber: version.versionNumber,
+    rules: version.rules.map((rule: any) => ({
+      id: rule.id,
+      name: rule.name,
+      description: rule.description,
+      severity: rule.severity,
+      condition: rule.condition,
+      effects: rule.effects,
+      reason: rule.reason,
+      enabled: rule.enabled,
+      priority: rule.priority,
+      policyId: version.policyId,
+      policyName: version.policy.name,
+      policyDomain: version.policy.domain,
+      policyVersionId: version.id,
+      policyVersionNumber: version.versionNumber,
+    })),
+  };
+};
 
 export const loadPublishedPolicyVersions = async () => {
   const now = new Date();
@@ -233,6 +257,9 @@ export const createAuditEvent = async (
   });
 
 export const resetDemoData = async () => {
+  const attachments = await prisma.requestAttachment.findMany({ select: { storageKey: true } });
+  await deleteStorageObjects(attachments.map(a => a.storageKey));
+
   await prisma.auditEvent.deleteMany();
   await prisma.policyEvaluationRuleMatch.deleteMany();
   await prisma.policyEvaluation.deleteMany();
@@ -292,6 +319,8 @@ export const resetDemoData = async () => {
             status: "PUBLISHED",
             effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
             authorId: "user-policy-owner",
+            approvedById: "user-policy-approver",
+            approvedAt: new Date("2026-01-01T00:00:00.000Z"),
             changeSummary: "Pierwsza wersja polityki demonstracyjnej.",
             rules: {
               create: policyVersion.rules.map(rule => ({
@@ -316,7 +345,7 @@ export const resetDemoData = async () => {
     data: {
       id: demoPendingApprovalVersion.id,
       policyId: demoPendingApprovalVersion.policyId,
-      versionNumber: demoPendingApprovalVersion.versionNumber,
+      versionNumber: null,
       status: "IN_REVIEW",
       authorId: demoPendingApprovalVersion.authorId,
       changeSummary: demoPendingApprovalVersion.changeSummary,
@@ -338,16 +367,11 @@ export const resetDemoData = async () => {
     },
   });
 
-  await prisma.policy.update({
-    where: { id: demoPendingApprovalVersion.policyId },
-    data: { status: "IN_REVIEW" },
-  });
-
   await createAuditEvent(
     "POLICY_VERSION_SUBMITTED_FOR_APPROVAL",
     "PolicyVersion",
     pendingVersion.id,
-    { policyId: demoPendingApprovalVersion.policyId, versionNumber: demoPendingApprovalVersion.versionNumber },
+    { policyId: demoPendingApprovalVersion.policyId },
     demoPendingApprovalVersion.authorId,
   );
 
@@ -397,7 +421,39 @@ export const resetDemoData = async () => {
 export const evaluateDraftInput = async (
   input: RequestInput,
   draftRule?: Omit<PolicyVersionDefinition["rules"][number], "policyVersionId" | "policyVersionNumber" | "policyId" | "policyName" | "policyDomain">,
+  policyVersionId?: string,
 ): Promise<PolicyEvaluationResult> => {
+  if (policyVersionId) {
+    const version = await prisma.policyVersion.findUnique({
+      where: { id: policyVersionId },
+      include: {
+        policy: { include: { versions: { select: { versionNumber: true } } } },
+        rules: { orderBy: [{ priority: "asc" }, { name: "asc" }] },
+      },
+    });
+    if (!version) {
+      throw new Error("Policy version not found.");
+    }
+    if (!["DRAFT", "IN_REVIEW"].includes(version.status)) {
+      throw new Error("Only a draft or review version can be tested in the rule console.");
+    }
+
+    const prospectiveVersionNumber =
+      Math.max(
+        0,
+        ...version.policy.versions
+          .map(item => item.versionNumber)
+          .filter((value): value is number => typeof value === "number"),
+      ) + 1;
+
+    return evaluatePolicyVersions(input, [
+      toPolicyVersionDefinition({
+        ...version,
+        versionNumber: prospectiveVersionNumber,
+      }),
+    ]);
+  }
+
   const policyVersions = await loadPublishedPolicyVersions();
 
   if (!draftRule) {

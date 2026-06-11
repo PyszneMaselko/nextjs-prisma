@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+export const approverGroups = [
+  "Procurement",
+  "Security",
+  "Finance",
+  "DPO",
+  "CFO",
+  "Compliance",
+] as const;
+
 export const conditionOperators = [
   "equals",
   "not_equals",

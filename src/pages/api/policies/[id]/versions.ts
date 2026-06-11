@@ -24,6 +24,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (isMemoryMode()) {
       const result = memoryCreateVersion(policyId, input);
       if (!result) return res.status(404).json({ error: "Policy not found" });
+      if ("error" in result) return res.status(409).json({ error: result.error });
       return res.status(201).json(result);
     }
 
@@ -32,7 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       include: {
         versions: {
           include: { rules: true },
-          orderBy: { versionNumber: "desc" },
+          orderBy: { createdAt: "desc" },
         },
       },
     });
@@ -41,20 +42,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(404).json({ error: "Policy not found" });
     }
 
-    const latestVersion = policy.versions[0];
-    const nextVersionNumber = (latestVersion?.versionNumber ?? 0) + 1;
+    if (policy.versions.some(version => ["DRAFT", "IN_REVIEW"].includes(version.status))) {
+      return res.status(409).json({
+        error: "Finish the existing DRAFT or IN_REVIEW version before creating another draft.",
+      });
+    }
+
+    const currentVersion =
+      policy.versions.find(version => version.id === policy.currentVersionId) ??
+      policy.versions.find(version => version.status === "PUBLISHED") ??
+      policy.versions.find(version => version.status === "ARCHIVED");
 
     const version = await prisma.policyVersion.create({
       data: {
         policyId,
-        versionNumber: nextVersionNumber,
+        versionNumber: null,
         status: "DRAFT",
         authorId: input.authorId,
         changeSummary: input.changeSummary,
         rules:
-          input.copyCurrentRules && latestVersion
+          input.copyCurrentRules && currentVersion
             ? {
-                create: latestVersion.rules.map(rule => ({
+                create: currentVersion.rules.map(rule => ({
                   name: rule.name,
                   description: rule.description,
                   severity: rule.severity,
@@ -71,20 +80,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     await prisma.policy.update({
       where: { id: policyId },
-      data: { status: "DRAFT" },
+      data: { status: policy.currentVersionId ? "PUBLISHED" : "DRAFT" },
     });
 
     await createAuditEvent(
       "POLICY_VERSION_CREATED",
       "PolicyVersion",
       version.id,
-      { policyId, versionNumber: nextVersionNumber },
+      { policyId },
       input.authorId,
     );
 
     const detail = await prisma.policy.findUnique({
       where: { id: policyId },
-      include: { owner: true, versions: { include: { author: true, rules: true } } },
+      include: {
+        owner: true,
+        versions: { include: { author: true, approvedBy: true, rules: true } },
+      },
     });
 
     return res.status(201).json({ policy: serializePolicy(detail) });

@@ -14,6 +14,8 @@ enum RoleCode {
   POLICY_APPROVER
   ADMIN
   AUDITOR
+  BUSINESS_OWNER
+  BUDGET_OWNER
 }
 
 enum RequestType {
@@ -148,6 +150,7 @@ model User {
   budgetRequests     Request[]           @relation("BudgetOwnerRequests")
   ownedPolicies      Policy[]            @relation("PolicyOwner")
   authoredVersions   PolicyVersion[]     @relation("PolicyVersionAuthor")
+  approvedVersions   PolicyVersion[]     @relation("PolicyVersionApprover")
   comments           RequestComment[]
   attachments        RequestAttachment[]
   evaluations        PolicyEvaluation[]  @relation("EvaluationActor")
@@ -268,19 +271,23 @@ model Policy {
 model PolicyVersion {
   id             String              @id @default(uuid())
   policyId       String
-  versionNumber  Int
+  versionNumber  Int?
   status         PolicyVersionStatus @default(DRAFT)
   effectiveFrom  DateTime?
   effectiveTo    DateTime?
   authorId       String
+  approvedById   String?
+  approvedAt     DateTime?
   changeSummary  String
   createdAt      DateTime            @default(now())
   policy         Policy              @relation(fields: [policyId], references: [id], onDelete: Cascade)
   author         User                @relation("PolicyVersionAuthor", fields: [authorId], references: [id])
+  approvedBy     User?               @relation("PolicyVersionApprover", fields: [approvedById], references: [id])
   rules          Rule[]
 
   @@unique([policyId, versionNumber])
   @@index([status])
+  @@index([approvedById])
 }
 
 model Rule {

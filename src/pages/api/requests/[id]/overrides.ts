@@ -2,22 +2,13 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "../../../../lib/prisma";
 import { handleApiError, methodNotAllowed, parseRequestBody } from "../../../../server/apiHelpers";
 import { isMemoryMode, memoryAddOverride } from "../../../../server/memoryStore";
-import { createAuditEvent, getRequestDetail } from "../../../../server/policyService";
+import {
+  createAuditEvent,
+  getRequestDetail,
+  statusForReviewerDecision,
+} from "../../../../server/policyService";
 import { serializeRequest } from "../../../../server/serializers";
 import { manualOverrideSchema } from "../../../../server/schemas";
-
-const statusForOverrideDecision = (decision: string) => {
-  switch (decision) {
-    case "APPROVED":
-      return "APPROVED_WITH_EXCEPTION";
-    case "REJECTED":
-      return "REJECTED";
-    case "MISSING_INFORMATION":
-      return "NEEDS_INFORMATION";
-    default:
-      return "IN_REVIEW";
-  }
-};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
@@ -56,18 +47,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     await prisma.request.update({
       where: { id: requestId },
       data: {
-        status: statusForOverrideDecision(input.newDecision) as any,
+        status: statusForReviewerDecision(input.newDecision, input.exception) as any,
       },
     });
 
     await createAuditEvent(
-      "REQUEST_DECISION_OVERRIDDEN",
+      input.exception ? "REQUEST_DECISION_OVERRIDDEN" : "REQUEST_REVIEW_DECIDED",
       "Request",
       requestId,
       {
         overrideId: override.id,
         originalDecision: request.decision,
         newDecision: input.newDecision,
+        exception: input.exception,
         reason: input.reason,
       },
       input.createdById,

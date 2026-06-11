@@ -242,7 +242,13 @@ export const evaluatePolicyVersions = (
         case "REQUIRE_REVIEW":
           decision = chooseDecision(decision, "REQUIRES_REVIEW");
           addUniqueString(requiredApprovers, effect.approver);
-          addUniqueString(nextSteps, effect.nextStep ?? `Uzyskaj ocenę: ${effect.approver}.`);
+          addUniqueString(
+            nextSteps,
+            effect.nextStep ??
+              (effect.approver
+                ? `Uzyskaj ocenę: ${effect.approver}.`
+                : "Przekaż wniosek do ręcznej oceny."),
+          );
           break;
         case "ADD_RISK_POINTS":
           riskPoints += effect.points ?? 0;

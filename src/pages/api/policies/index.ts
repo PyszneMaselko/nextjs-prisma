@@ -17,8 +17,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         include: {
           owner: true,
           versions: {
-            include: { author: true, rules: { orderBy: [{ priority: "asc" }, { name: "asc" }] } },
-            orderBy: { versionNumber: "desc" },
+            include: {
+              author: true,
+              approvedBy: true,
+              rules: { orderBy: [{ priority: "asc" }, { name: "asc" }] },
+            },
+            orderBy: { createdAt: "desc" },
           },
         },
         orderBy: [{ domain: "asc" }, { name: "asc" }],
@@ -34,20 +38,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(201).json(memoryCreatePolicy(input));
       }
 
-      const status = input.publish ? "PUBLISHED" : "DRAFT";
-
       const policy = await prisma.policy.create({
         data: {
           name: input.name,
           description: input.description,
           domain: input.domain,
-          status,
+          status: "DRAFT",
           ownerId: input.ownerId,
           versions: {
             create: {
-              versionNumber: 1,
-              status,
-              effectiveFrom: input.publish ? new Date() : null,
+              versionNumber: null,
+              status: "DRAFT",
+              effectiveFrom: null,
               authorId: input.ownerId,
               changeSummary: input.changeSummary,
             },
@@ -57,15 +59,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
 
       const version = policy.versions[0];
-      if (input.publish) {
-        await prisma.policy.update({
-          where: { id: policy.id },
-          data: { currentVersionId: version.id },
-        });
-      }
 
       await createAuditEvent(
-        input.publish ? "POLICY_CREATED_AND_PUBLISHED" : "POLICY_CREATED",
+        "POLICY_CREATED",
         "Policy",
         policy.id,
         { versionId: version.id, domain: input.domain },
@@ -74,7 +70,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const detail = await prisma.policy.findUnique({
         where: { id: policy.id },
-        include: { owner: true, versions: { include: { author: true, rules: true } } },
+        include: {
+          owner: true,
+          versions: { include: { author: true, approvedBy: true, rules: true } },
+        },
       });
 
       return res.status(201).json({ policy: serializePolicy(detail) });

@@ -27,6 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ...(req.query.category ? { category: req.query.category } : {}),
         ...(req.query.department ? { department: req.query.department } : {}),
         ...(req.query.urgency ? { urgency: req.query.urgency } : {}),
+        ...(req.query.requesterId ? { requesterId: req.query.requesterId } : {}),
         ...(search
           ? {
               OR: [

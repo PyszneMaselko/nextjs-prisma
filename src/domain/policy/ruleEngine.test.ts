@@ -73,4 +73,38 @@ describe("evaluatePolicyVersions", () => {
     expect(result.decision).toBe("REJECTED");
     expect(result.missingFields).toEqual([{ field: "dpaDocument", label: "DPA" }]);
   });
+
+  it("uses a readable fallback when manual review has no named approver", () => {
+    const result = evaluatePolicyVersions(
+      { annualCost: 100 },
+      [
+        {
+          id: "version-review",
+          policyId: "policy-review",
+          policyName: "Review policy",
+          policyDomain: "PROCUREMENT",
+          versionNumber: 1,
+          rules: [
+            {
+              name: "Manual review",
+              description: "Requires a reviewer.",
+              severity: "WARNING",
+              condition: { field: "annualCost", operator: "greater_than", value: 1 },
+              effects: [{ type: "REQUIRE_REVIEW" }],
+              reason: "Manual review is required.",
+              enabled: true,
+              priority: 1,
+              policyId: "policy-review",
+              policyName: "Review policy",
+              policyDomain: "PROCUREMENT",
+              policyVersionId: "version-review",
+              policyVersionNumber: 1,
+            },
+          ],
+        },
+      ],
+    );
+
+    expect(result.nextSteps).toEqual(["Przekaż wniosek do ręcznej oceny."]);
+  });
 });

@@ -47,5 +47,6 @@ export const serializePolicy = (policy: any) => ({
     createdAt: serializeDate(version.createdAt),
     effectiveFrom: serializeDate(version.effectiveFrom),
     effectiveTo: serializeDate(version.effectiveTo),
+    approvedAt: serializeDate(version.approvedAt),
   })),
 });

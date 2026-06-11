@@ -1,7 +1,13 @@
-import { demoPolicyVersions, demoRequestInput, demoRoles, demoUsers } from "../domain/policy/demoData";
+import {
+  demoPendingApprovalVersion,
+  demoPolicyVersions,
+  demoRequestInput,
+  demoRoles,
+  demoUsers,
+} from "../domain/policy/demoData";
 import { evaluatePolicyVersions } from "../domain/policy/ruleEngine";
-import { PolicyVersionDefinition, RequestInput } from "../domain/policy/types";
-import { requestStatusForDecision } from "./policyService";
+import { approverGroups, PolicyVersionDefinition, RequestInput } from "../domain/policy/types";
+import { requestStatusForDecision, statusForReviewerDecision } from "./policyService";
 
 type MemoryState = {
   roles: any[];
@@ -136,6 +142,9 @@ const createInitialState = (): MemoryState => {
         effectiveTo: null,
         authorId: "user-policy-owner",
         author: users.find(user => user.id === "user-policy-owner"),
+        approvedById: "user-policy-approver",
+        approvedBy: users.find(user => user.id === "user-policy-approver"),
+        approvedAt: "2026-01-01T00:00:00.000Z",
         changeSummary: "Pierwsza wersja polityki demonstracyjnej.",
         createdAt: now(),
         rules: policyVersion.rules.map(rule => ({
@@ -154,6 +163,30 @@ const createInitialState = (): MemoryState => {
       },
     ],
   }));
+
+  const procurementPolicy = policies.find(policy => policy.id === demoPendingApprovalVersion.policyId);
+  procurementPolicy?.versions.unshift({
+    id: demoPendingApprovalVersion.id,
+    policyId: demoPendingApprovalVersion.policyId,
+    versionNumber: null,
+    status: "IN_REVIEW",
+    effectiveFrom: null,
+    effectiveTo: null,
+    authorId: demoPendingApprovalVersion.authorId,
+    author: users.find(user => user.id === demoPendingApprovalVersion.authorId),
+    approvedById: null,
+    approvedBy: null,
+    approvedAt: null,
+    changeSummary: demoPendingApprovalVersion.changeSummary,
+    createdAt: now(),
+    rules: [
+      {
+        ...(demoPendingApprovalVersion.rule as any),
+        createdAt: now(),
+        updatedAt: now(),
+      },
+    ],
+  });
 
   const requests = [
     {
@@ -255,6 +288,7 @@ export const memoryBootstrap = () => {
       urgency: ["LOW", "NORMAL", "HIGH", "EMERGENCY"],
       vendorRisks: ["LOW", "MEDIUM", "HIGH", "UNKNOWN"],
       decisions: ["APPROVED", "REQUIRES_REVIEW", "REJECTED", "MISSING_INFORMATION"],
+      approvers: approverGroups,
     },
   };
 };
@@ -302,15 +336,23 @@ export const memoryDashboard = () => {
 
 export const memoryListRequests = (query: any) => {
   const state = getMemoryState();
+  const page = Math.max(Number(query.page ?? 1), 1);
+  const pageSize = Math.min(Math.max(Number(query.pageSize ?? 10), 1), 50);
   const search = String(query.search ?? "").toLocaleLowerCase();
-  const requests = state.requests
+  const filtered = state.requests
     .filter(request => (!query.status || request.status === query.status))
     .filter(request => (!query.decision || request.decision === query.decision))
     .filter(request => (!query.category || request.category === query.category))
+    .filter(request => (!query.department || request.department === query.department))
+    .filter(request => (!query.urgency || request.urgency === query.urgency))
+    .filter(request => (!query.requesterId || request.requesterId === query.requesterId))
     .filter(request => !search || request.title.toLocaleLowerCase().includes(search) || request.vendorName.toLocaleLowerCase().includes(search))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const requests = filtered
+    .slice((page - 1) * pageSize, page * pageSize)
     .map(request => attachRelations(state, request));
 
-  return { page: 1, pageSize: requests.length, total: requests.length, requests };
+  return { page, pageSize, total: filtered.length, requests };
 };
 
 export const memoryGetRequest = (requestId: string) => {
@@ -344,12 +386,23 @@ export const memoryUpdateRequest = (requestId: string, input: any) => {
   const state = getMemoryState();
   const request = state.requests.find(item => item.id === requestId);
   if (!request) return null;
-  Object.assign(request, input, {
-    status: input.mode === "submit" ? "SUBMITTED" : input.mode === "draft" ? "DRAFT" : request.status,
-    inputData: { ...request.inputData, ...input },
+  if (!["DRAFT", "NEEDS_INFORMATION"].includes(request.status)) {
+    return { error: "Only DRAFT or NEEDS_INFORMATION requests can be edited." };
+  }
+  const { requesterId: _ignoredRequesterId, ...editableInput } = input;
+  Object.assign(request, editableInput, {
+    status:
+      input.mode === "submit"
+        ? "SUBMITTED"
+        : input.mode === "draft" && request.status === "DRAFT"
+          ? "DRAFT"
+          : request.status,
+    inputData: { ...request.inputData, ...editableInput },
     updatedAt: now(),
   });
-  return input.mode === "submit" ? evaluateMemoryRequest(state, request.id, input.requesterId) : attachRelations(state, request);
+  return input.mode === "submit"
+    ? evaluateMemoryRequest(state, request.id, request.requesterId)
+    : attachRelations(state, request);
 };
 
 export const memoryAddComment = (requestId: string, input: any) => {
@@ -364,7 +417,8 @@ export const memoryAddAttachment = (requestId: string, input: any) => {
   const state = getMemoryState();
   const request = state.requests.find(item => item.id === requestId);
   if (!request) return null;
-  request.attachments.unshift({ id: id("attachment"), requestId, createdAt: now(), storageKey: `metadata:${input.fileName}`, ...input });
+  const storageKey = input.storageKey ?? `metadata:${input.fileName}`;
+  request.attachments.unshift({ id: id("attachment"), requestId, createdAt: now(), storageKey, ...input });
   if (input.attachmentType === "DPA") {
     request.hasDpa = true;
     request.inputData = { ...request.inputData, hasDpa: true, dpaDocument: input.fileName };
@@ -384,7 +438,14 @@ export const memoryAddOverride = (requestId: string, input: any) => {
     createdAt: now(),
     ...input,
   });
-  request.status = input.newDecision === "APPROVED" ? "APPROVED_WITH_EXCEPTION" : request.status;
+  request.status = statusForReviewerDecision(input.newDecision, input.exception);
+  request.updatedAt = now();
+  state.auditEvents.push({
+    action: input.exception ? "REQUEST_DECISION_OVERRIDDEN" : "REQUEST_REVIEW_DECIDED",
+    entityId: requestId,
+    actorId: input.createdById,
+    createdAt: now(),
+  });
   return attachRelations(state, request);
 };
 
@@ -394,28 +455,30 @@ export const memoryCreatePolicy = (input: any) => {
   const state = getMemoryState();
   const policyId = id("policy");
   const versionId = id("version");
-  const status = input.publish ? "PUBLISHED" : "DRAFT";
   const policy = {
     id: policyId,
     name: input.name,
     description: input.description,
     domain: input.domain,
-    status,
+    status: "DRAFT",
     ownerId: input.ownerId,
     owner: userById(state, input.ownerId),
-    currentVersionId: input.publish ? versionId : null,
+    currentVersionId: null,
     createdAt: now(),
     updatedAt: now(),
     versions: [
       {
         id: versionId,
         policyId,
-        versionNumber: 1,
-        status,
-        effectiveFrom: input.publish ? now() : null,
+        versionNumber: null,
+        status: "DRAFT",
+        effectiveFrom: null,
         effectiveTo: null,
         authorId: input.ownerId,
         author: userById(state, input.ownerId),
+        approvedById: null,
+        approvedBy: null,
+        approvedAt: null,
         changeSummary: input.changeSummary,
         createdAt: now(),
         rules: [],
@@ -430,22 +493,33 @@ export const memoryCreateVersion = (policyId: string, input: any) => {
   const state = getMemoryState();
   const policy = state.policies.find(item => item.id === policyId);
   if (!policy) return null;
-  const latest = policy.versions[0];
+  if (policy.versions.some((version: any) => ["DRAFT", "IN_REVIEW"].includes(version.status))) {
+    return {
+      error: "Finish the existing DRAFT or IN_REVIEW version before creating another draft.",
+    };
+  }
+  const current =
+    policy.versions.find((version: any) => version.id === policy.currentVersionId) ??
+    policy.versions.find((version: any) => version.status === "PUBLISHED") ??
+    policy.versions.find((version: any) => version.status === "ARCHIVED");
   const version = {
     id: id("version"),
     policyId,
-    versionNumber: (latest?.versionNumber ?? 0) + 1,
+    versionNumber: null,
     status: "DRAFT",
     effectiveFrom: null,
     effectiveTo: null,
     authorId: input.authorId,
     author: userById(state, input.authorId),
+    approvedById: null,
+    approvedBy: null,
+    approvedAt: null,
     changeSummary: input.changeSummary,
     createdAt: now(),
-    rules: input.copyCurrentRules && latest ? latest.rules.map((rule: any) => ({ ...rule, id: id("rule") })) : [],
+    rules: input.copyCurrentRules && current ? current.rules.map((rule: any) => ({ ...rule, id: id("rule") })) : [],
   };
   policy.versions.unshift(version);
-  policy.status = "DRAFT";
+  policy.status = policy.currentVersionId ? "PUBLISHED" : "DRAFT";
   return { policy };
 };
 
@@ -461,8 +535,11 @@ export const memorySubmitVersionForApproval = (policyId: string, versionId: stri
   if (version.status !== "DRAFT") {
     return { error: "Only DRAFT versions can be submitted for approval." };
   }
+  if (version.rules.length === 0) {
+    return { error: "Add and save at least one rule before submitting the version for approval." };
+  }
   version.status = "IN_REVIEW";
-  policy.status = "IN_REVIEW";
+  policy.status = policy.currentVersionId ? "PUBLISHED" : "IN_REVIEW";
   return { policy };
 };
 
@@ -480,7 +557,7 @@ export const memoryRejectVersion = (policyId: string, versionId: string, actorId
   }
   version.status = "DRAFT";
   version.rejectionReason = reason;
-  policy.status = "DRAFT";
+  policy.status = policy.currentVersionId ? "PUBLISHED" : "DRAFT";
   return { policy };
 };
 
@@ -496,18 +573,40 @@ export const memoryPublishVersion = (policyId: string, versionId: string, actorI
   if (target.status !== "IN_REVIEW") {
     return { error: "Only versions awaiting approval can be published. Submit the version for approval first." };
   }
+  if (target.rules.length === 0) {
+    return { error: "A policy version without rules cannot be published." };
+  }
+  const nextVersionNumber =
+    Math.max(
+      0,
+      ...policy.versions
+        .map((version: any) => version.versionNumber)
+        .filter((versionNumber: unknown): versionNumber is number => typeof versionNumber === "number"),
+    ) + 1;
+  const publishedAt = now();
   policy.versions.forEach((version: any) => {
     if (version.id === versionId) {
+      version.versionNumber = nextVersionNumber;
       version.status = "PUBLISHED";
-      version.effectiveFrom = now();
+      version.effectiveFrom = publishedAt;
       version.effectiveTo = null;
+      version.approvedById = actorId;
+      version.approvedBy = userById(state, actorId);
+      version.approvedAt = publishedAt;
     } else if (version.status === "PUBLISHED") {
       version.status = "ARCHIVED";
-      version.effectiveTo = now();
+      version.effectiveTo = publishedAt;
     }
   });
   policy.status = "PUBLISHED";
   policy.currentVersionId = versionId;
+  state.auditEvents.push({
+    action: "POLICY_VERSION_PUBLISHED",
+    entityId: versionId,
+    actorId,
+    metadata: { policyId, versionNumber: nextVersionNumber },
+    createdAt: publishedAt,
+  });
   return { policy };
 };
 
@@ -516,17 +615,76 @@ export const memoryCreateRule = (input: any) => {
   const policy = state.policies.find(item => item.versions.some((version: any) => version.id === input.policyVersionId));
   const version = policy?.versions.find((item: any) => item.id === input.policyVersionId);
   if (!policy || !version) return null;
-  if (!["DRAFT", "IN_REVIEW"].includes(version.status)) {
-    throw new Error("Rules can only be added to DRAFT or IN_REVIEW policy versions.");
+  if (version.status !== "DRAFT") {
+    return { error: "Rules can only be added to DRAFT policy versions." };
   }
   const rule = { id: id("rule"), createdAt: now(), updatedAt: now(), ...input };
   version.rules.push(rule);
   return { policy, rule };
 };
 
-export const memoryTestRules = (input: any, draftRule?: any) => {
+export const memoryUpdateRule = (ruleId: string, input: any) => {
+  const state = getMemoryState();
+  const policy = state.policies.find(item =>
+    item.versions.some((version: any) =>
+      version.rules.some((rule: any) => rule.id === ruleId),
+    ),
+  );
+  const version = policy?.versions.find((item: any) =>
+    item.rules.some((rule: any) => rule.id === ruleId),
+  );
+  const rule = version?.rules.find((item: any) => item.id === ruleId);
+  if (!policy || !version || !rule) return null;
+  if (version.status !== "DRAFT") {
+    return { error: "Rules can only be edited in DRAFT policy versions." };
+  }
+
+  Object.assign(rule, input, { updatedAt: now() });
+  return { policy, rule };
+};
+
+export const memoryTestRules = (input: any, draftRule?: any, policyVersionId?: string) => {
   const state = getMemoryState();
   const facts = { ...demoRequestInput, ...input };
+  if (policyVersionId) {
+    const policy = state.policies.find(item =>
+      item.versions.some((version: any) => version.id === policyVersionId),
+    );
+    const version = policy?.versions.find((item: any) => item.id === policyVersionId);
+    if (!policy || !version) {
+      throw new Error("Policy version not found.");
+    }
+    if (!["DRAFT", "IN_REVIEW"].includes(version.status)) {
+      throw new Error("Only a draft or review version can be tested in the rule console.");
+    }
+    const prospectiveVersionNumber =
+      Math.max(
+        0,
+        ...policy.versions
+          .map((item: any) => item.versionNumber)
+          .filter((value: unknown): value is number => typeof value === "number"),
+      ) + 1;
+
+    return {
+      result: evaluatePolicyVersions(facts, [
+        {
+          id: version.id,
+          policyId: policy.id,
+          policyName: policy.name,
+          policyDomain: policy.domain,
+          versionNumber: prospectiveVersionNumber,
+          rules: version.rules.map((rule: any) => ({
+            ...rule,
+            policyId: policy.id,
+            policyName: policy.name,
+            policyDomain: policy.domain,
+            policyVersionId: version.id,
+            policyVersionNumber: prospectiveVersionNumber,
+          })),
+        },
+      ]),
+    };
+  }
   if (!draftRule) return { result: evaluatePolicyVersions(facts, toPolicyDefinitions(state)) };
   return {
     result: evaluatePolicyVersions(facts, [

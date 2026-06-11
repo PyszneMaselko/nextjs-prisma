@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "../../lib/prisma";
+import { approverGroups } from "../../domain/policy/types";
 import { handleApiError, methodNotAllowed } from "../../server/apiHelpers";
 import { isMemoryMode, memoryBootstrap } from "../../server/memoryStore";
 
@@ -39,6 +40,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         urgency: ["LOW", "NORMAL", "HIGH", "EMERGENCY"],
         vendorRisks: ["LOW", "MEDIUM", "HIGH", "UNKNOWN"],
         decisions: ["APPROVED", "REQUIRES_REVIEW", "REJECTED", "MISSING_INFORMATION"],
+        approvers: approverGroups,
       },
     });
   } catch (error) {
