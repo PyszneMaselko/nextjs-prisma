@@ -1,5 +1,7 @@
 # Policy Checker — MVP
 
+[![CI](https://github.com/PyszneMaselko/nextjs-prisma/actions/workflows/ci.yml/badge.svg)](https://github.com/PyszneMaselko/nextjs-prisma/actions/workflows/ci.yml)
+
 Aplikacja webowa, która sprawdza, czy **wnioski zakupowe i wdrożenia dostawców** spełniają obowiązujące w organizacji polityki. Dla każdego wniosku zwraca jedną decyzję wraz z pełnym uzasadnieniem („według polityki X w wersji Y wynik to Z”), historią ocen i śladem audytowym.
 
 Projekt powstał jako case study rekrutacyjny dla **SKILL AND CHILL** na podstawie dokumentu wymagań *Policy Checker*. Poniżej opis tego, **co i jak zostało zbudowane** oraz **jakie świadome uproszczenia** przyjęto względem pełnej specyfikacji.
