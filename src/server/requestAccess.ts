@@ -1,9 +1,11 @@
+const requestAuditRoles = ["REVIEWER", "AUDITOR", "POLICY_OWNER", "ADMIN"];
+
 export const canReadRequest = (
   roleCodes: string[],
   actorId: string,
   requesterId: string,
 ) =>
-  roleCodes.some(role => ["REVIEWER", "AUDITOR", "ADMIN"].includes(role)) ||
+  roleCodes.some(role => requestAuditRoles.includes(role)) ||
   (roleCodes.includes("REQUESTER") && actorId === requesterId);
 
 export const canModifyRequestFiles = (
@@ -15,10 +17,10 @@ export const canModifyRequestFiles = (
   (roleCodes.includes("REQUESTER") && actorId === requesterId);
 
 export const canViewInternalComments = (roleCodes: string[]) =>
-  roleCodes.some(role => ["REVIEWER", "AUDITOR", "ADMIN"].includes(role));
+  roleCodes.some(role => requestAuditRoles.includes(role));
 
 export const canListRequests = (roleCodes: string[]) =>
-  roleCodes.some(role => ["REQUESTER", "REVIEWER", "AUDITOR", "ADMIN"].includes(role));
+  roleCodes.some(role => role === "REQUESTER" || requestAuditRoles.includes(role));
 
 export const hideInternalComments = <T extends { comments?: any[] }>(
   request: T,

@@ -22,6 +22,7 @@ import {
 import {
   ArrowDownTray,
   ArrowPath,
+  ArrowUpDown,
   BadgeCheck,
   Beaker,
   BellAlert,
@@ -1200,14 +1201,18 @@ const exportEvaluationCsv = (request: any, evaluation: any) => {
 
 const PolicyDetailDrawer = ({
   policy,
+  versionId,
   open,
   onOpenChange,
 }: {
   policy: any;
+  versionId?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) => {
-  const version = policy?.versions?.find((item: any) => item.id === policy.currentVersionId) ?? policy?.versions?.[0];
+  const version = versionId
+    ? policy?.versions?.find((item: any) => item.id === versionId)
+    : policy?.versions?.find((item: any) => item.id === policy?.currentVersionId) ?? policy?.versions?.[0];
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -1515,7 +1520,14 @@ const Home: NextPage = () => {
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [selectedRuleId, setSelectedRuleId] = useState("");
   const [selectedPolicyId, setSelectedPolicyId] = useState("");
+  const [selectedDraftVersionId, setSelectedDraftVersionId] = useState("");
   const [selectedApprovalVersionId, setSelectedApprovalVersionId] = useState("");
+  const [selectedHistoryVersionId, setSelectedHistoryVersionId] = useState("");
+  const [historyFilters, setHistoryFilters] = useState<{ search: string; status: string; sort: "desc" | "asc" }>({
+    search: "",
+    status: "__ALL__",
+    sort: "desc",
+  });
   const [rejectForm, setRejectForm] = useState({
     reason: "Próg kosztowy wymaga dodatkowego uzasadnienia biznesowego przed publikacją.",
   });
@@ -1589,6 +1601,9 @@ const Home: NextPage = () => {
   const availableScreens = screenCatalog.filter(screen => screen.roles.some(role => actorRoles.includes(role)));
   const latestEvaluation = selectedRequest?.latestEvaluation ?? selectedRequest?.evaluations?.[0];
   const selectedResult = latestEvaluation?.resultSnapshot;
+  const needsDpaDocument =
+    selectedRequest?.status === "NEEDS_INFORMATION" &&
+    (selectedResult?.missingFields ?? []).some((field: any) => field.field === "dpaDocument");
   const selectedAuditEvaluation =
     selectedRequest?.evaluations?.find(
       (evaluation: any) => evaluation.id === selectedAuditEvaluationId,
@@ -1612,14 +1627,19 @@ const Home: NextPage = () => {
         .filter(
           (version: any) =>
             ["PUBLISHED", "ARCHIVED"].includes(version.status) &&
-            typeof version.versionNumber === "number",
+            typeof version.versionNumber === "number" &&
+            (historyFilters.status === "__ALL__" || version.status === historyFilters.status) &&
+            version.policy.name.toLowerCase().includes(historyFilters.search.trim().toLowerCase()),
         )
-        .sort(
-          (left: any, right: any) =>
-            new Date(right.approvedAt ?? right.effectiveFrom ?? right.createdAt).getTime() -
-            new Date(left.approvedAt ?? left.effectiveFrom ?? left.createdAt).getTime(),
-        ),
-    [versions],
+        .sort((left: any, right: any) => {
+          const leftTime = new Date(left.approvedAt ?? left.effectiveFrom ?? left.createdAt).getTime();
+          const rightTime = new Date(right.approvedAt ?? right.effectiveFrom ?? right.createdAt).getTime();
+          return historyFilters.sort === "asc" ? leftTime - rightTime : rightTime - leftTime;
+        }),
+    [versions, historyFilters],
+  );
+  const selectedHistoryVersion = approvedPolicyVersions.find(
+    (version: any) => version.id === selectedHistoryVersionId,
   );
   const pendingApprovalVersions = versions.filter((version: any) => version.status === "IN_REVIEW");
   const selectedApprovalVersion = pendingApprovalVersions.find((version: any) => version.id === selectedApprovalVersionId);
@@ -1857,22 +1877,26 @@ const Home: NextPage = () => {
     }, "Comment added");
   };
 
+  // Upload goes through our own API (same-origin) which streams the bytes to object storage
+  // server-side. This avoids the cross-origin/CORS failures of a presigned browser PUT and works
+  // the same locally and on Railway; when no storage is configured it falls back to metadata-only.
   const uploadRequestAttachment = async (file: File, type: string) => {
     if (!selectedRequestId) throw new Error("Select a request before uploading a file.");
     const mimeType = file.type || "application/octet-stream";
-    const { uploadUrl, storageKey } = await postJson("/api/upload/presign", {
-      fileName: file.name,
-      mimeType,
+    const params = new URLSearchParams({
       requestId: selectedRequestId,
       actorId,
+      fileName: file.name,
+      mimeType,
     });
 
-    const uploadRes = await fetch(uploadUrl, {
-      method: "PUT",
-      body: file,
+    const uploadRes = await fetch(`/api/upload/object?${params.toString()}`, {
+      method: "POST",
       headers: { "Content-Type": mimeType },
+      body: file,
     });
-    if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.statusText}`);
+    const uploadData = await uploadRes.json().catch(() => ({}));
+    if (!uploadRes.ok) throw new Error(uploadData.error ?? "Upload failed");
 
     await postJson(`/api/requests/${selectedRequestId}/attachments`, {
       uploadedById: actorId,
@@ -1880,7 +1904,7 @@ const Home: NextPage = () => {
       fileName: file.name,
       mimeType,
       sizeBytes: file.size,
-      storageKey,
+      storageKey: uploadData.storageKey,
     });
 
     return file.name;
@@ -2499,10 +2523,23 @@ const Home: NextPage = () => {
                       </div>
 
                       {isEditableRequest(selectedRequest) && (
-                        <Button variant="secondary" onClick={() => editRequestInForm(selectedRequest)}>
-                          <PencilSquare className="h-4 w-4" />
-                          {selectedRequest.status === "NEEDS_INFORMATION" ? "Complete & resubmit" : "Edit draft"}
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => editRequestInForm(selectedRequest)}
+                          >
+                            <PencilSquare className="h-4 w-4" />
+                            {selectedRequest.status === "NEEDS_INFORMATION"
+                              ? "Complete & resubmit"
+                              : "Edit draft"}
+                          </Button>
+                          {needsDpaDocument && (
+                            <Text size="xsmall" className="self-center text-ui-fg-muted">
+                              Albo dodaj wymagany dokument DPA poniżej, aby ponownie ocenić wniosek.
+                            </Text>
+                          )}
+                        </div>
                       )}
 
                       {selectedResult ? (
@@ -2558,8 +2595,17 @@ const Home: NextPage = () => {
                         </InlineTip>
                       )}
 
-                      <form className="rounded-lg border border-ui-border-base bg-ui-bg-subtle p-4" onSubmit={addAttachment}>
-                        <Text weight="plus" size="small">Supporting documents</Text>
+                      <form
+                        className={`rounded-lg border p-4 ${
+                          needsDpaDocument
+                            ? "border-ui-tag-orange-border bg-ui-tag-orange-bg/40"
+                            : "border-ui-border-base bg-ui-bg-subtle"
+                        }`}
+                        onSubmit={addAttachment}
+                      >
+                        <Text weight="plus" size="small">
+                          {needsDpaDocument ? "Add the required DPA document" : "Supporting documents"}
+                        </Text>
                         <Text size="xsmall" className="mt-1 text-ui-fg-muted">
                           {selectedRequest.status === "NEEDS_INFORMATION"
                             ? "Dodaj DPA, umowę, ofertę lub inny dokument. DPA uruchomi ponowną ocenę tego wniosku."
@@ -2609,9 +2655,15 @@ const Home: NextPage = () => {
                         <div className="mt-4 grid gap-3">
                           <SelectField label="Document type" value={attachmentType} onValueChange={setAttachmentType} options={options(["DPA", "CONTRACT", "OFFER", "APPROVAL_MAIL", "SECURITY_QUESTIONNAIRE", "VENDOR_ASSESSMENT", "OTHER"])} />
                           <Input type="file" onChange={event => setAttachmentFile(event.target.files?.[0] ?? null)} />
-                          <Button type="submit" variant="secondary" disabled={!attachmentFile}>
+                          <Button
+                            type="submit"
+                            variant={needsDpaDocument ? "primary" : "secondary"}
+                            disabled={!attachmentFile}
+                          >
                             <PaperClip className="h-4 w-4" />
-                            Upload file
+                            {needsDpaDocument && attachmentType === "DPA"
+                              ? "Add DPA & re-evaluate"
+                              : "Upload file"}
                           </Button>
                         </div>
                       </form>
@@ -2935,7 +2987,11 @@ const Home: NextPage = () => {
                             </Table.Header>
                             <Table.Body>
                               {openPolicyVersions.map((version: any) => (
-                                <Table.Row key={version.id}>
+                                <Table.Row
+                                  key={version.id}
+                                  className="cursor-pointer"
+                                  onClick={() => setSelectedDraftVersionId(version.id)}
+                                >
                                   <Table.Cell>
                                     <Text weight="plus" size="small">{version.policy.name}</Text>
                                     <Text size="xsmall" className="text-ui-fg-muted">{version.policy.domain}</Text>
@@ -2956,7 +3012,8 @@ const Home: NextPage = () => {
                                         type="button"
                                         variant="secondary"
                                         size="small"
-                                        onClick={() => {
+                                        onClick={event => {
+                                          event.stopPropagation();
                                           setSelectedVersionId(version.id);
                                           applyRuleBuilderState(version.id);
                                         }}
@@ -2984,6 +3041,15 @@ const Home: NextPage = () => {
                 open={Boolean(selectedPolicyId)}
                 onOpenChange={open => {
                   if (!open) setSelectedPolicyId("");
+                }}
+              />
+
+              <PolicyDetailDrawer
+                policy={openPolicyVersions.find((version: any) => version.id === selectedDraftVersionId)?.policy}
+                versionId={selectedDraftVersionId}
+                open={Boolean(selectedDraftVersionId)}
+                onOpenChange={open => {
+                  if (!open) setSelectedDraftVersionId("");
                 }}
               />
 
@@ -3385,37 +3451,44 @@ const Home: NextPage = () => {
                             </Text>
                           ))}
                         </div>
-                        <div className="space-y-3">
-                          <Text weight="plus" size="small">Matched rules and effects</Text>
-                          {(testResult.matchedRules ?? []).map((rule: any) => (
-                            <div key={`${rule.policyVersionId}-${rule.ruleId ?? rule.ruleName}`} className="rounded-lg border border-ui-border-base bg-ui-bg-base p-3">
-                              <div className="flex flex-wrap items-start justify-between gap-2">
-                                <div>
-                                  <Text weight="plus" size="small">{rule.ruleName}</Text>
-                                  <Text size="xsmall" className="text-ui-fg-muted">
-                                    {rule.policyName} · v{rule.policyVersionNumber}
-                                  </Text>
+                        {(() => {
+                          const evaluatedRules: any[] = testResult.ruleResults ?? testResult.matchedRules ?? [];
+                          const matchedEvaluated = evaluatedRules.filter((rule: any) => rule.matched);
+                          const unmatchedEvaluated = evaluatedRules.filter((rule: any) => !rule.matched);
+                          const appliedVersions =
+                            testResult.appliedPolicyVersions ?? testResult.matchedPolicyVersions ?? [];
+                          return (
+                            <div className="space-y-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Text weight="plus" size="small">Rules evaluated</Text>
+                                <Badge size="2xsmall" color="green">{matchedEvaluated.length} matched</Badge>
+                                <Badge size="2xsmall" color="grey">{unmatchedEvaluated.length} not matched</Badge>
+                              </div>
+                              {appliedVersions.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {appliedVersions.map((policy: any) => (
+                                    <Badge key={policy.policyVersionId} size="2xsmall" color="purple" className={wrappingBadgeClassName}>
+                                      {policy.policyName} v{policy.versionNumber}
+                                    </Badge>
+                                  ))}
                                 </div>
-                                <Badge size="2xsmall">{rule.severity}</Badge>
-                              </div>
-                              <div className="mt-3">
-                                <EffectSummary effects={rule.effects ?? []} />
-                              </div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                {(rule.facts ?? []).map((fact: any, factIndex: number) => (
-                                  <Badge key={`${fact.field}-${factIndex}`} size="2xsmall" color={fact.matched ? "green" : "grey"} className={wrappingBadgeClassName}>
-                                    {fieldLabels[fact.field] ?? fact.field}: {String(fact.actual)} → {String(fact.expected)}
-                                  </Badge>
+                              )}
+                              <div className="space-y-3">
+                                {matchedEvaluated.map((rule: any, index: number) => (
+                                  <RuleResultCard key={`m-${rule.policyVersionId}-${rule.ruleId ?? rule.ruleName}-${index}`} rule={rule} />
                                 ))}
+                                {unmatchedEvaluated.map((rule: any, index: number) => (
+                                  <RuleResultCard key={`u-${rule.policyVersionId}-${rule.ruleId ?? rule.ruleName}-${index}`} rule={rule} />
+                                ))}
+                                {evaluatedRules.length === 0 && (
+                                  <Text size="small" className="text-ui-fg-subtle">
+                                    Brak aktywnych reguł do oceny — opublikuj wersję polityki, aby pojawiła się tutaj.
+                                  </Text>
+                                )}
                               </div>
                             </div>
-                          ))}
-                          {(testResult.matchedRules ?? []).length === 0 && (
-                            <Text size="small" className="text-ui-fg-subtle">
-                              Żadna reguła nie została dopasowana do danych testowych.
-                            </Text>
-                          )}
-                        </div>
+                          );
+                        })()}
                       </Container>
                     )}
                   </div>
@@ -3517,12 +3590,32 @@ const Home: NextPage = () => {
                            <Text weight="plus">{selectedApprovalVersion.rules?.length ?? 0}</Text>
                          </div>
                        </div>
-                      <div className="space-y-3">
-                        <Text weight="plus">Rules in this version</Text>
-                        {(selectedApprovalVersion.rules ?? []).map((rule: any) => (
-                          <RuleDetailCard key={rule.id} rule={rule} />
-                        ))}
-                        {(selectedApprovalVersion.rules ?? []).length === 0 && <Text size="small">No rules in this version.</Text>}
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="space-y-3">
+                          <Text weight="plus">
+                            Current version{currentApprovalBaseVersion ? ` (v${currentApprovalBaseVersion.versionNumber})` : ""}
+                          </Text>
+                          {!currentApprovalBaseVersion && (
+                            <Text size="small" className="text-ui-fg-subtle">
+                              No published version yet — this would be the first publication.
+                            </Text>
+                          )}
+                          {(currentApprovalBaseVersion?.rules ?? []).map((rule: any) => (
+                            <RuleDetailCard key={rule.id} rule={rule} />
+                          ))}
+                          {currentApprovalBaseVersion && (currentApprovalBaseVersion.rules ?? []).length === 0 && (
+                            <Text size="small">No rules in the current version.</Text>
+                          )}
+                        </div>
+                        <div className="space-y-3">
+                          <Text weight="plus">
+                            Candidate version (v{nextPublishedVersionNumber(selectedApprovalVersion.policy)})
+                          </Text>
+                          {(selectedApprovalVersion.rules ?? []).map((rule: any) => (
+                            <RuleDetailCard key={rule.id} rule={rule} />
+                          ))}
+                          {(selectedApprovalVersion.rules ?? []).length === 0 && <Text size="small">No rules in this version.</Text>}
+                        </div>
                       </div>
                       <form onSubmit={rejectVersion} className="space-y-3 border-t border-ui-border-base pt-5">
                         <Text weight="plus">Reject version</Text>
@@ -3543,6 +3636,39 @@ const Home: NextPage = () => {
                   title="Published change history"
                   description="Historia zatwierdzonych publikacji wraz z autorem zmiany, approverem i datą publikacji."
                 />
+                <div className="grid gap-3 border-b border-ui-border-base p-4 sm:grid-cols-[1fr_1fr_auto]">
+                  <TextField
+                    label="Search"
+                    value={historyFilters.search}
+                    onChange={value => setHistoryFilters(current => ({ ...current, search: value }))}
+                    placeholder="Policy name"
+                  />
+                  <SelectField
+                    label="Status"
+                    value={historyFilters.status}
+                    onValueChange={value => setHistoryFilters(current => ({ ...current, status: value }))}
+                    options={[
+                      { value: "__ALL__", label: "All statuses" },
+                      { value: "PUBLISHED", label: "Published" },
+                      { value: "ARCHIVED", label: "Archived" },
+                    ]}
+                  />
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() =>
+                        setHistoryFilters(current => ({
+                          ...current,
+                          sort: current.sort === "desc" ? "asc" : "desc",
+                        }))
+                      }
+                    >
+                      <ArrowUpDown className="h-4 w-4" />
+                      {historyFilters.sort === "desc" ? "Newest first" : "Oldest first"}
+                    </Button>
+                  </div>
+                </div>
                 {approvedPolicyVersions.length === 0 ? (
                   <div className="p-6">
                     <EmptyState
@@ -3566,7 +3692,11 @@ const Home: NextPage = () => {
                       </Table.Header>
                       <Table.Body>
                         {approvedPolicyVersions.map((version: any) => (
-                          <Table.Row key={version.id}>
+                          <Table.Row
+                            key={version.id}
+                            className="cursor-pointer"
+                            onClick={() => setSelectedHistoryVersionId(version.id)}
+                          >
                             <Table.Cell>
                               <Text weight="plus" size="small">{version.policy.name}</Text>
                             </Table.Cell>
@@ -3587,6 +3717,15 @@ const Home: NextPage = () => {
                   </TableScroll>
                 )}
               </Container>
+
+              <PolicyDetailDrawer
+                policy={selectedHistoryVersion?.policy}
+                versionId={selectedHistoryVersionId}
+                open={Boolean(selectedHistoryVersionId)}
+                onOpenChange={open => {
+                  if (!open) setSelectedHistoryVersionId("");
+                }}
+              />
             </div>
           )}
 

@@ -5,6 +5,7 @@ import { handleApiError, methodNotAllowed, parseRequestBody } from "../../../../
 import { isMemoryMode, memorySubmitVersionForApproval } from "../../../../server/memoryStore";
 import { createAuditEvent, getActorRoleCodes } from "../../../../server/policyService";
 import { serializePolicy } from "../../../../server/serializers";
+import { findConditionContradiction } from "../../../../domain/policy/types";
 
 const submitSchema = z.object({
   versionId: z.string().min(1),
@@ -32,10 +33,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(403).json({ error: "Only a Policy Owner can submit a version for approval." });
     }
 
-    const [policyRecord, version, ruleCount] = await Promise.all([
+    const [policyRecord, version, rules] = await Promise.all([
       prisma.policy.findUnique({ where: { id: policyId } }),
       prisma.policyVersion.findUnique({ where: { id: input.versionId } }),
-      prisma.rule.count({ where: { policyVersionId: input.versionId } }),
+      prisma.rule.findMany({ where: { policyVersionId: input.versionId } }),
     ]);
     if (!policyRecord) {
       return res.status(404).json({ error: "Policy not found" });
@@ -46,9 +47,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (version.status !== "DRAFT") {
       return res.status(400).json({ error: "Only DRAFT versions can be submitted for approval." });
     }
-    if (ruleCount === 0) {
+    if (rules.length === 0) {
       return res.status(400).json({
         error: "Add and save at least one rule before submitting the version for approval.",
+      });
+    }
+    const invalidRule = rules
+      .map(rule => ({ rule, contradiction: findConditionContradiction(rule.condition as any) }))
+      .find(item => item.contradiction);
+    if (invalidRule) {
+      return res.status(400).json({
+        error: `Rule "${invalidRule.rule.name}" is contradictory: ${invalidRule.contradiction}`,
       });
     }
 

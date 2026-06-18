@@ -59,6 +59,30 @@ export interface ConditionGroup {
 
 export type ConditionNode = FieldCondition | ConditionGroup;
 
+const isConditionGroup = (condition: ConditionNode): condition is ConditionGroup =>
+  "conditions" in condition;
+
+export const findConditionContradiction = (condition: ConditionNode): string | null => {
+  if (!isConditionGroup(condition)) return null;
+
+  if (condition.combinator === "ALL") {
+    const equalsByField = new Map<string, unknown>();
+    for (const child of condition.conditions) {
+      if (isConditionGroup(child) || child.operator !== "equals") continue;
+      if (equalsByField.has(child.field) && !Object.is(equalsByField.get(child.field), child.value)) {
+        return `Field "${child.field}" cannot equal ${String(equalsByField.get(child.field))} and ${String(child.value)} at the same time. Use ANY or remove one condition.`;
+      }
+      equalsByField.set(child.field, child.value);
+    }
+  }
+
+  for (const child of condition.conditions) {
+    const contradiction = findConditionContradiction(child);
+    if (contradiction) return contradiction;
+  }
+  return null;
+};
+
 export interface RuleEffect {
   type: RuleEffectType;
   approver?: string;

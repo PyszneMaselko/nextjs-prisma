@@ -90,6 +90,17 @@ To jest MVP — poniżej najważniejsze decyzje „co pominęliśmy / uprościli
 | **Polityki demo** | 4 polityki (zakupy, ryzyko dostawcy, dane osobowe, finanse). | Np. „duplikacja narzędzi SaaS” ze scenariusza §15 — nieobjęta. |
 | **AI** | Brak — silnik deterministyczny (zgodnie z NFR-3). | AI może w przyszłości *pomagać pisać* reguły, nigdy decydować. |
 
+### Rozstrzygnięcia otwartych decyzji projektowych (§14)
+
+| Decyzja | Przyjęte rozwiązanie w MVP | Uzasadnienie i konsekwencje |
+|---|---|---|
+| **Architektura aplikacji** | Fullstack **Next.js 13** w jednym repozytorium. UI korzysta z pages routera, a backend z Next API Routes. | Osobny frontend React i backend NestJS nie zostały wprowadzone. Dla MVP jeden projekt upraszcza wdrożenie, współdzielenie typów i utrzymanie. |
+| **Przechowywanie załączników** | Pliki są przechowywane w **MinIO**, czyli storage S3-compatible. PostgreSQL przechowuje metadane i `storageKey`, a upload oraz download korzystają z czasowych presigned URL. | Pliki nie są przechowywane lokalnie w kontenerze aplikacji, więc nie znikają po redeployu Railway. Dostęp do generowania linków jest kontrolowany przez RBAC. |
+| **Zatwierdzanie manual override** | Wyjątek wymaga **jednej osoby zatwierdzającej**, wskazanej w `approverId`. Autor decyzji, approver, powód, komentarz i opcjonalna nazwa załącznika są zapisywane w `ManualOverride`. | Model nie obsługuje w MVP sekwencji ani kworum wielu zatwierdzających. Zwykła decyzja Reviewera i wyjątek korzystają z tego samego rekordu, rozróżnionego flagą `isException`. |
+| **Historia ocen** | Przyjęto model **hybrydowy**: pełne `inputSnapshot`, `resultSnapshot` i `appliedPolicyVersions` są zapisane jako JSON, natomiast ocena, dopasowania reguł i działania człowieka mają również osobne rekordy relacyjne. | `PolicyEvaluation` przechowuje niemutowalne snapshoty, `PolicyEvaluationRuleMatch` przechowuje znormalizowaną listę wyników reguł, a `ManualOverride` osobno przechowuje decyzje Reviewera i wyjątki. Pozwala to wiernie odtworzyć historyczny wynik i jednocześnie filtrować kluczowe dane. |
+| **Kreator reguł** | MVP udostępnia wyłącznie **condition builder**: warunki `ALL` / `ANY`, operatory oraz efekty reguły. | Tabela decyzyjna nie jest zaimplementowana. Techniczny JSON pozostaje jedynie pomocniczym podglądem, a nie podstawowym sposobem tworzenia reguł. |
+| **Limity i typy plików** | Typ biznesowy załącznika jest ograniczony do: `DPA`, `CONTRACT`, `OFFER`, `APPROVAL_MAIL`, `SECURITY_QUESTIONNAIRE`, `VENDOR_ASSESSMENT`, `OTHER`. | MVP zapisuje MIME type i rozmiar, ale **nie egzekwuje maksymalnego rozmiaru pliku ani whitelisty MIME/rozszerzeń**. Są to świadomie pozostawione ograniczenia do ustalenia przed wersją produkcyjną; obecnie presigned URL wygasa po 300 sekundach. |
+
 Dodatkowo dla wygody dema: tryb **in-memory** (`POLICY_CHECKER_MEMORY_DEMO=1`) uruchamia aplikację bez PostgreSQL, a przycisk **„Reset demo”** zasiewa komplet danych (7 wniosków pokrywających wszystkie statusy + historię: komentarze, załączniki, override’y).
 
 ### Zgodność z kryteriami MVP (§13)

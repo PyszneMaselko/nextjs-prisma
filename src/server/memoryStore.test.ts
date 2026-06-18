@@ -4,6 +4,7 @@ import {
   memoryCreateRequest,
   memoryCreateRule,
   memoryCreateVersion,
+  memoryAddAttachment,
   memoryAddComment,
   memoryAddOverride,
   memoryGetRequest,
@@ -131,7 +132,7 @@ describe("memory policy lifecycle", () => {
     expect(empty.requests).toHaveLength(0);
   });
 
-  it("hides internal comments from requesters and exposes them to reviewers and auditors", () => {
+  it("hides internal comments from requesters and exposes them to audit-capable roles", () => {
     const request = createReviewRequest();
     const commented = memoryAddComment(request.id, {
       authorId: "user-reviewer",
@@ -151,9 +152,38 @@ describe("memory policy lifecycle", () => {
     expect(memoryGetRequestForActor(request.id, "user-auditor")).toMatchObject({
       comments: [expect.objectContaining({ body: "Internal reviewer note." })],
     });
-    expect(memoryGetRequestForActor(request.id, "user-policy-owner")).toEqual({
-      error: "You do not have permission to view this request.",
+    expect(memoryGetRequestForActor(request.id, "user-policy-owner")).toMatchObject({
+      comments: [expect.objectContaining({ body: "Internal reviewer note." })],
     });
+  });
+
+  it("uploads a missing DPA and immediately re-evaluates the request", () => {
+    const before = memoryGetRequest("request-demo-acme-analytics");
+    expect(before).toMatchObject({
+      status: "NEEDS_INFORMATION",
+      hasDpa: false,
+    });
+    const evaluationCountBeforeUpload = before?.evaluations.length ?? 0;
+
+    const updated = memoryAddAttachment("request-demo-acme-analytics", {
+      uploadedById: "user-requester",
+      attachmentType: "DPA",
+      fileName: "acme-dpa.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1024,
+      storageKey: "metadata:acme-dpa.pdf",
+    });
+
+    expect(updated).toMatchObject({
+      status: "IN_REVIEW",
+      hasDpa: true,
+      latestEvaluation: {
+        decision: "REQUIRES_REVIEW",
+        resultSnapshot: { missingFields: [] },
+      },
+      attachments: [expect.objectContaining({ attachmentType: "DPA" })],
+    });
+    expect(updated.evaluations).toHaveLength(evaluationCountBeforeUpload + 1);
   });
 
   it("always creates new policies as drafts", () => {
@@ -223,6 +253,76 @@ describe("memory policy lifecycle", () => {
       }),
     ]);
     expect(draft.versionNumber).toBeNull();
+  });
+
+  it("uses the newly published version when testing active policies", () => {
+    const created = memoryCreateVersion("policy-data-processing", {
+      authorId: "user-policy-owner",
+      changeSummary: "Published console regression test",
+      copyCurrentRules: true,
+    });
+    const draft = created!.policy.versions.find((version: any) => version.status === "DRAFT");
+
+    expect(memorySubmitVersionForApproval(
+      "policy-data-processing",
+      draft.id,
+      "user-policy-owner",
+    )).not.toHaveProperty("error");
+    expect(memoryPublishVersion(
+      "policy-data-processing",
+      draft.id,
+      "user-policy-approver",
+    )).not.toHaveProperty("error");
+
+    const activeTest = memoryTestRules({ processesPersonalData: true, hasDpa: false });
+    expect(activeTest.result.appliedPolicyVersions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          policyVersionId: draft.id,
+          versionNumber: 2,
+        }),
+      ]),
+    );
+    expect(activeTest.result.ruleResults).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          policyVersionId: draft.id,
+          matched: true,
+        }),
+      ]),
+    );
+  });
+
+  it("blocks a contradictory ALL rule before approval", () => {
+    const created = memoryCreateVersion("policy-data-processing", {
+      authorId: "user-policy-owner",
+      changeSummary: "Contradictory condition test",
+      copyCurrentRules: false,
+    });
+    const draft = created!.policy.versions.find((version: any) => version.status === "DRAFT");
+    memoryCreateRule({
+      policyVersionId: draft.id,
+      name: "Impossible risk rule",
+      description: "A vendor cannot have two risk values at once.",
+      severity: "BLOCKER",
+      condition: {
+        combinator: "ALL",
+        conditions: [
+          { field: "vendorRisk", operator: "equals", value: "HIGH" },
+          { field: "vendorRisk", operator: "equals", value: "MEDIUM" },
+        ],
+      },
+      effects: [{ type: "REQUIRE_REVIEW", approver: "Security" }],
+      reason: "Impossible condition",
+      enabled: true,
+      priority: 10,
+    });
+
+    expect(memorySubmitVersionForApproval(
+      "policy-data-processing",
+      draft.id,
+      "user-policy-owner",
+    )).toMatchObject({ error: expect.stringContaining("cannot equal HIGH and MEDIUM") });
   });
 
   it("prevents parallel draft or review versions for one policy", () => {

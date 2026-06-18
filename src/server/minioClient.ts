@@ -15,6 +15,11 @@ const serverEndpoint =
 // Presigned URLs are consumed by the browser, so they must always point to the public endpoint.
 const publicEndpoint = process.env.MINIO_PUBLIC_ENDPOINT;
 
+// True only when object storage is actually configured. When it is not (e.g. a local demo run
+// without MinIO credentials) uploads degrade gracefully to metadata-only attachments instead of
+// failing, so the rest of the flow (DPA re-evaluation, audit trail) keeps working.
+export const isStorageConfigured = Boolean(publicEndpoint && ACCESS_KEY && SECRET_KEY);
+
 const clientConfig = (endpoint: string | undefined) => ({
   endpoint,
   region: "us-east-1",

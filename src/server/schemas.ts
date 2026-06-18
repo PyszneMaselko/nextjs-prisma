@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { conditionSchema, ruleEffectSchema } from "../domain/policy/types";
+import { conditionSchema, findConditionContradiction, ruleEffectSchema } from "../domain/policy/types";
 
 export const requestInputSchema = z.object({
   title: z.string().min(3),
@@ -126,7 +126,7 @@ export const manualOverrideSchema = z
     }
   });
 
-export const ruleCreateSchema = z.object({
+const ruleSchema = z.object({
   policyVersionId: z.string().min(1),
   name: z.string().min(3),
   description: z.string().min(3),
@@ -138,13 +138,26 @@ export const ruleCreateSchema = z.object({
   priority: z.coerce.number().int().default(100),
 });
 
-export const ruleUpdateSchema = ruleCreateSchema.omit({ policyVersionId: true });
+const validateRuleCondition = (input: z.infer<typeof ruleSchema>, context: z.RefinementCtx) => {
+  const contradiction = findConditionContradiction(input.condition);
+  if (contradiction) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["condition"],
+      message: contradiction,
+    });
+  }
+};
 
-const draftRuleTestSchema = ruleCreateSchema.omit({ policyVersionId: true }).extend({
+export const ruleCreateSchema = ruleSchema.superRefine(validateRuleCondition);
+
+export const ruleUpdateSchema = ruleSchema.omit({ policyVersionId: true }).superRefine(validateRuleCondition);
+
+const draftRuleTestSchema = ruleSchema.omit({ policyVersionId: true }).extend({
   name: z.string().min(1).default("Test rule"),
   description: z.string().min(1).default("Temporary rule tested in the rule console."),
   reason: z.string().min(1).default("The temporary test rule matched."),
-});
+}).superRefine(validateRuleCondition);
 
 export const policyCreateSchema = z.object({
   ownerId: z.string().min(1),

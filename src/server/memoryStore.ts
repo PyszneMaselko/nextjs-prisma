@@ -7,7 +7,12 @@ import {
   demoUsers,
 } from "../domain/policy/demoData";
 import { evaluatePolicyVersions } from "../domain/policy/ruleEngine";
-import { approverGroups, PolicyVersionDefinition, RequestInput } from "../domain/policy/types";
+import {
+  approverGroups,
+  findConditionContradiction,
+  PolicyVersionDefinition,
+  RequestInput,
+} from "../domain/policy/types";
 import { requestStatusForDecision, statusForReviewerDecision } from "./policyService";
 import {
   canListRequests,
@@ -680,6 +685,12 @@ export const memorySubmitVersionForApproval = (policyId: string, versionId: stri
   if (version.rules.length === 0) {
     return { error: "Add and save at least one rule before submitting the version for approval." };
   }
+  const invalidRule = version.rules
+    .map((rule: any) => ({ rule, contradiction: findConditionContradiction(rule.condition) }))
+    .find((item: any) => item.contradiction);
+  if (invalidRule) {
+    return { error: `Rule "${invalidRule.rule.name}" is contradictory: ${invalidRule.contradiction}` };
+  }
   version.status = "IN_REVIEW";
   policy.status = policy.currentVersionId ? "PUBLISHED" : "IN_REVIEW";
   return { policy };
@@ -717,6 +728,12 @@ export const memoryPublishVersion = (policyId: string, versionId: string, actorI
   }
   if (target.rules.length === 0) {
     return { error: "A policy version without rules cannot be published." };
+  }
+  const invalidRule = target.rules
+    .map((rule: any) => ({ rule, contradiction: findConditionContradiction(rule.condition) }))
+    .find((item: any) => item.contradiction);
+  if (invalidRule) {
+    return { error: `Rule "${invalidRule.rule.name}" is contradictory: ${invalidRule.contradiction}` };
   }
   const nextVersionNumber =
     Math.max(

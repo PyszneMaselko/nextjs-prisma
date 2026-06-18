@@ -5,6 +5,7 @@ import { handleApiError, methodNotAllowed, parseRequestBody } from "../../../../
 import { isMemoryMode, memoryPublishVersion } from "../../../../server/memoryStore";
 import { createAuditEvent, getActorRoleCodes } from "../../../../server/policyService";
 import { serializePolicy } from "../../../../server/serializers";
+import { findConditionContradiction } from "../../../../domain/policy/types";
 
 const publishSchema = z.object({
   versionId: z.string().min(1),
@@ -34,7 +35,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const targetVersion = await prisma.policyVersion.findUnique({
       where: { id: input.versionId },
-      include: { _count: { select: { rules: true } } },
+      include: { rules: true },
     });
     if (!targetVersion || targetVersion.policyId !== policyId) {
       return res.status(404).json({ error: "Policy version not found" });
@@ -42,8 +43,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (targetVersion.status !== "IN_REVIEW") {
       return res.status(400).json({ error: "Only versions awaiting approval can be published. Submit the version for approval first." });
     }
-    if (targetVersion._count.rules === 0) {
+    if (targetVersion.rules.length === 0) {
       return res.status(400).json({ error: "A policy version without rules cannot be published." });
+    }
+    const invalidRule = targetVersion.rules
+      .map(rule => ({ rule, contradiction: findConditionContradiction(rule.condition as any) }))
+      .find(item => item.contradiction);
+    if (invalidRule) {
+      return res.status(400).json({
+        error: `Rule "${invalidRule.rule.name}" is contradictory: ${invalidRule.contradiction}`,
+      });
     }
 
     const now = new Date();

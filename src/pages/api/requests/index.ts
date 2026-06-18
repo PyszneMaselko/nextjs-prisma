@@ -34,7 +34,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ...req.query,
           requesterId:
             roleCodes.includes("REQUESTER") &&
-            !roleCodes.some(role => ["REVIEWER", "AUDITOR", "ADMIN"].includes(role))
+            !roleCodes.some(role => ["REVIEWER", "AUDITOR", "POLICY_OWNER", "ADMIN"].includes(role))
               ? actorId
               : req.query.requesterId,
         };
@@ -52,7 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const requesterScope =
         roleCodes.includes("REQUESTER") &&
-        !roleCodes.some(role => ["REVIEWER", "AUDITOR", "ADMIN"].includes(role))
+        !roleCodes.some(role => ["REVIEWER", "AUDITOR", "POLICY_OWNER", "ADMIN"].includes(role))
           ? actorId
           : req.query.requesterId;
       const where: any = {
